@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cafedra-backend",
+      "runtimeExecutable": ".venv/Scripts/uvicorn.exe",
+      "runtimeArgs": ["app.main:app", "--host", "127.0.0.1", "--port", "8000", "--app-dir", "backend", "--reload", "--reload-dir", "backend"],
+      "port": 8000
+    }
+  ]
+}

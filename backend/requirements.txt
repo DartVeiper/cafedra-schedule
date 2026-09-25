@@ -1,0 +1,9 @@
+pandas
+xlrd
+openpyxl
+python-docx
+fastapi
+uvicorn[standard]
+python-multipart
+jinja2
+pywin32; platform_system == "Windows"

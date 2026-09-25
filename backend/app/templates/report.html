@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Отчёт по накладкам</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="page">
+  <p><a href="/">&larr; Загрузить другой набор файлов</a></p>
+  <h1>Отчёт по накладкам</h1>
+
+  <div class="summary">
+    <div class="summary-card">
+      <div class="summary-number">{{ lesson_count }}</div>
+      <div class="summary-label">занятий всего ({{ individual_count }} индивид. + {{ group_count }} групп.)</div>
+    </div>
+    <div class="summary-card certain">
+      <div class="summary-number">{{ certain_count }}</div>
+      <div class="summary-label">явных накладок</div>
+    </div>
+    <div class="summary-card review">
+      <div class="summary-number">{{ review_count }}</div>
+      <div class="summary-label">требуют ручной проверки</div>
+    </div>
+  </div>
+
+  <p><a class="export-link" href="/report/{{ import_id }}/export.xlsx">Скачать отчёт в Excel</a></p>
+
+  {% for group in conflict_groups %}
+    {% if group.conflicts %}
+    <h2>{{ group.label }} <span class="count">({{ group.conflicts|length }})</span></h2>
+    <table class="conflict-table">
+      <thead>
+        <tr>
+          <th>День</th><th>Запись A</th><th>Запись B</th><th>Примечание</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in group.conflicts %}
+        <tr class="{{ 'review-row' if not c.is_certain else '' }}">
+          <td>{{ day_names[c.day_of_week] }}</td>
+          <td>
+            <div class="lesson-cell">
+              <b>{{ c.lesson_a.teacher_name or c.lesson_a.accompanist_name or '—' }}</b>
+              {{ c.lesson_a.start_time.strftime('%H:%M') }}
+              {% if c.lesson_a.student_name %}· студент {{ c.lesson_a.student_name }}{% endif %}
+              · гр.{{ c.lesson_a.group_raw or '—' }} · {{ c.lesson_a.subject or '—' }} · ауд.{{ c.lesson_a.room_raw or '—' }}
+              <div class="source">{{ c.lesson_a.source.label() }}</div>
+            </div>
+          </td>
+          <td>
+            <div class="lesson-cell">
+              <b>{{ c.lesson_b.teacher_name or c.lesson_b.accompanist_name or '—' }}</b>
+              {{ c.lesson_b.start_time.strftime('%H:%M') }}
+              {% if c.lesson_b.student_name %}· студент {{ c.lesson_b.student_name }}{% endif %}
+              · гр.{{ c.lesson_b.group_raw or '—' }} · {{ c.lesson_b.subject or '—' }} · ауд.{{ c.lesson_b.room_raw or '—' }}
+              <div class="source">{{ c.lesson_b.source.label() }}</div>
+            </div>
+          </td>
+          <td>{% if not c.is_certain %}<span class="badge">проверить</span>{% endif %} {{ c.note or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  {% endfor %}
+
+  <h2>Служебная информация об импорте</h2>
+  <details>
+    <summary>Загруженные файлы ({{ notes.individual_files|length }} индивид. + {{ notes.group_files|length }} групп.)</summary>
+    <ul>
+      {% for f in notes.individual_files %}<li>{{ f }}</li>{% endfor %}
+      {% for f in notes.group_files %}<li>{{ f }}</li>{% endfor %}
+    </ul>
+  </details>
+  <details>
+    <summary>Отброшенные листы-дубликаты ({{ notes.dropped_sheet_notes|length }})</summary>
+    <ul>{% for n in notes.dropped_sheet_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+  </details>
+  <details>
+    <summary>Слияния почти-дублей ({{ notes.merge_notes|length }})</summary>
+    <ul>{% for n in notes.merge_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+  </details>
+  <details>
+    <summary>Пропущенные пустые листы ({{ notes.skipped_sheet_notes|length }})</summary>
+    <ul>{% for n in notes.skipped_sheet_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+  </details>
+  <details>
+    <summary>Предупреждения парсинга ({{ notes.parse_warnings|length }})</summary>
+    <ul>{% for n in notes.parse_warnings %}<li>{{ n }}</li>{% endfor %}</ul>
+  </details>
+  {% if notes.zip_rename_notes %}
+  <details>
+    <summary>Исправленные имена файлов из ZIP ({{ notes.zip_rename_notes|length }})</summary>
+    <ul>{% for n in notes.zip_rename_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  {% if notes.upload_warnings %}
+  <details open>
+    <summary>Пропущенные файлы при загрузке ({{ notes.upload_warnings|length }})</summary>
+    <ul>{% for n in notes.upload_warnings %}<li>{{ n }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+</div>
+</body>
+</html>

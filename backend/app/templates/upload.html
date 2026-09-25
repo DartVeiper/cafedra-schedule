@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Кафедра фортепиано — поиск накладок в расписании</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="page">
+  <h1>Поиск накладок в расписании — кафедра фортепиано</h1>
+  <p class="lead">
+    Загрузите файлы расписания: ZIP-архив с индивидуальными занятиями (.xls/.xlsx),
+    отдельные файлы .doc/.docx с групповыми занятиями. Можно всё сразу, в любом сочетании.
+  </p>
+
+  <form action="/import" method="post" enctype="multipart/form-data" class="upload-form">
+    <label class="drop-label">
+      <span>Файлы расписания (ZIP / .xls / .xlsx / .doc / .docx)</span>
+      <input type="file" name="files" multiple required
+             accept=".zip,.xls,.xlsx,.doc,.docx">
+    </label>
+    <button type="submit">Загрузить и найти накладки</button>
+  </form>
+
+  {% if recent %}
+  <h2>Недавние проверки</h2>
+  <ul class="recent-list">
+    {% for row in recent %}
+    <li><a href="/report/{{ row['id'] }}">{{ row['created_at'] }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+</body>
+</html>
