@@ -25,7 +25,14 @@
     </div>
   </div>
 
-  <p><a class="export-link" href="/report/{{ import_id }}/export.xlsx">Скачать отчёт в Excel</a></p>
+  <form method="get" action="/report/{{ import_id }}" class="toggle-form">
+    <label class="toggle-label">
+      <input type="checkbox" name="hide_accompanist" value="true" onchange="this.form.submit()" {% if hide_accompanist %}checked{% endif %}>
+      Скрыть накладки с участием концертмейстера
+    </label>
+  </form>
+
+  <p><a class="export-link" href="/report/{{ import_id }}/export.xlsx{% if hide_accompanist %}?hide_accompanist=true{% endif %}">Скачать отчёт в Excel</a></p>
 
   {% for group in conflict_groups %}
     {% if group.conflicts %}

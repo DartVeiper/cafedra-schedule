@@ -131,7 +131,11 @@ async def do_import(request: Request, files: list[UploadFile] = File(...)):
     return RedirectResponse(url=f"/report/{import_id}", status_code=303)
 
 
-def _build_report_context(import_id: str) -> dict | None:
+def _involves_accompanist(c) -> bool:
+    return bool(c.lesson_a.accompanist_name or c.lesson_b.accompanist_name)
+
+
+def _build_report_context(import_id: str, hide_accompanist: bool = False) -> dict | None:
     conn = db.get_connection(DB_PATH)
     try:
         if not db.import_exists(conn, import_id):
@@ -142,6 +146,8 @@ def _build_report_context(import_id: str) -> dict | None:
         conn.close()
 
     conflicts = find_conflicts(lessons)
+    if hide_accompanist:
+        conflicts = [c for c in conflicts if not _involves_accompanist(c)]
     by_type: dict[str, list] = {}
     for c in conflicts:
         by_type.setdefault(c.type.value, []).append(c)
@@ -160,6 +166,7 @@ def _build_report_context(import_id: str) -> dict | None:
         "group_count": group_count,
         "certain_count": certain_count,
         "review_count": review_count,
+        "hide_accompanist": hide_accompanist,
         "conflict_groups": [
             {"type": ctype, "label": CONFLICT_LABELS[ctype], "conflicts": by_type.get(ctype.value, [])}
             for ctype in ConflictType
@@ -169,15 +176,15 @@ def _build_report_context(import_id: str) -> dict | None:
 
 
 @app.get("/report/{import_id}", response_class=HTMLResponse)
-def report(request: Request, import_id: str):
-    ctx = _build_report_context(import_id)
+def report(request: Request, import_id: str, hide_accompanist: bool = False):
+    ctx = _build_report_context(import_id, hide_accompanist=hide_accompanist)
     if ctx is None:
         return HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
     return templates.TemplateResponse(request, "report.html", ctx)
 
 
 @app.get("/api/report/{import_id}")
-def api_report(import_id: str):
+def api_report(import_id: str, hide_accompanist: bool = False):
     conn = db.get_connection(DB_PATH)
     try:
         if not db.import_exists(conn, import_id):
@@ -186,6 +193,8 @@ def api_report(import_id: str):
     finally:
         conn.close()
     conflicts = find_conflicts(lessons)
+    if hide_accompanist:
+        conflicts = [c for c in conflicts if not _involves_accompanist(c)]
 
     def lesson_json(l):
         return {
@@ -210,7 +219,7 @@ def api_report(import_id: str):
 
 
 @app.get("/report/{import_id}/export.xlsx")
-def export_xlsx(import_id: str):
+def export_xlsx(import_id: str, hide_accompanist: bool = False):
     import openpyxl
     from openpyxl.utils import get_column_letter
 
@@ -222,6 +231,8 @@ def export_xlsx(import_id: str):
     finally:
         conn.close()
     conflicts = find_conflicts(lessons)
+    if hide_accompanist:
+        conflicts = [c for c in conflicts if not _involves_accompanist(c)]
 
     wb = openpyxl.Workbook()
     ws = wb.active

@@ -60,6 +60,10 @@ button:hover { opacity: 0.9; }
 .recent-list { padding-left: 18px; }
 .recent-list a { color: var(--accent); text-decoration: none; }
 
+.toggle-form { margin: 16px 0 4px; }
+.toggle-label { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer; }
+.toggle-label input { width: 16px; height: 16px; cursor: pointer; }
+
 .summary { display: flex; gap: 16px; margin: 20px 0; flex-wrap: wrap; }
 .summary-card {
   background: var(--card-bg);
