@@ -25,6 +25,17 @@
     кафедры из Формата 1 (там корпус не указан вовсе).
   - Номер/название группы — из абзаца 'группа NN X' в начале документа; в паре
     файлов (12МИИ, 22МИИ) этого абзаца нет — тогда берём группу из имени файла.
+  - "Полторы пары" и подобное: сетка тайм-слотов дня фиксированная (8-30,
+    10-15, 12-00, 14-25/15-10, 16-55, 17-45, 18-40), а реальная пара иногда
+    длиннее одного слота. В таблице это оформлено НЕ одной строкой с большей
+    длительностью, а повтором той же дисциплины/преподавателя/аудитории в
+    двух (или более) идущих подряд строках сетки — реальный пример с кафедры:
+    'Музыкальная литература' у Иванченко О.М. стоит и в 15-10, и в 16-55 —
+    это ОДНО занятие "пара + пол пары" (135 мин, 15:10-17:25), а не два
+    отдельных по 90 минут. Без склейки такое занятие ошибочно "накладывалось"
+    на следующее за ним по сетке индивидуальное занятие в 17:45, хотя реально
+    к этому времени пара уже закончилась. Склеиваем такие подряд идущие
+    одинаковые строки в одно занятие (см. _merge_consecutive_runs).
 """
 from __future__ import annotations
 
@@ -68,9 +79,7 @@ def parse_group_docx(path: str) -> GroupParseResult:
         warnings.append(ParseWarning(file_name, None, "Не найдена таблица расписания (ожидался заголовок 'ДАТА/ВРЕМЯ')"))
         return GroupParseResult(file_name, group_raw, group_norm, [], [], warnings)
 
-    lessons: list[Lesson] = []
-    marker_slots: list[tuple[int, object]] = []
-    special_slots: list[tuple[int, object, str]] = []
+    raw_rows: list[dict] = []
     for row_idx, row in enumerate(table.rows[1:], start=1):
         cells = [c.text.strip() for c in row.cells]
         if len(cells) < 5:
@@ -87,8 +96,22 @@ def parse_group_docx(path: str) -> GroupParseResult:
             warnings.append(ParseWarning(file_name, table_sheet_label(), f"Не распознано время '{time_raw}'", row_idx))
             continue
 
+        raw_rows.append({
+            "row_idx": row_idx, "day_idx": day_idx, "time": time_val,
+            "subject_raw": subject_raw, "teacher_raw": teacher_raw, "room_raw": room_raw,
+        })
+
+    lessons: list[Lesson] = []
+    marker_slots: list[tuple[int, object]] = []
+    special_slots: list[tuple[int, object, str]] = []
+
+    i = 0
+    while i < len(raw_rows):
+        r = raw_rows[i]
+        subject_raw, teacher_raw, room_raw = r["subject_raw"], r["teacher_raw"], r["room_raw"]
         subject = normalize_subject(subject_raw)
         if not subject:
+            i += 1
             continue  # свободный слот
 
         # Служебные строки (куратор.час и т.п.) в реальных файлах записаны так, что
@@ -97,12 +120,18 @@ def parse_group_docx(path: str) -> GroupParseResult:
         # все группы, у которых куратор.час в одно и то же время, дадут ложную
         # накладку "преподаватель в двух местах" и "аудитория занята дважды".
         if subject_raw.strip().lower() == teacher_raw.strip().lower() == room_raw.strip().lower():
-            special_slots.append((day_idx, time_val, subject))
+            special_slots.append((r["day_idx"], r["time"], subject))
+            i += 1
             continue
 
         if subject.lower() == INDIVIDUAL_MARKER:
-            marker_slots.append((day_idx, time_val))
+            marker_slots.append((r["day_idx"], r["time"]))
+            i += 1
             continue
+
+        run_end = _extend_run(raw_rows, i, subject)
+        run_length = run_end - i + 1
+        duration = GROUP_LESSON_MINUTES + (GROUP_LESSON_MINUTES // 2) * (run_length - 1)
 
         teacher = normalize_person_name(teacher_raw)
         building, room_num = _split_room(room_raw)
@@ -111,20 +140,39 @@ def parse_group_docx(path: str) -> GroupParseResult:
         lessons.append(
             Lesson(
                 lesson_type=LessonType.GROUP,
-                day_of_week=day_idx,
-                start_time=time_val,
-                duration_minutes=GROUP_LESSON_MINUTES,
+                day_of_week=r["day_idx"],
+                start_time=r["time"],
+                duration_minutes=duration,
                 teacher_name=teacher,
                 group_raw=group_raw,
                 group_normalized=group_norm,
                 subject=subject,
                 room_raw=room_raw or None,
                 room_normalized=room_norm,
-                source=SourceRef(file_name=file_name, sheet_name=None, row_index=row_idx),
+                source=SourceRef(file_name=file_name, sheet_name=None, row_index=r["row_idx"]),
             )
         )
+        i = run_end + 1
 
     return GroupParseResult(file_name, group_raw, group_norm, lessons, marker_slots, special_slots, warnings)
+
+
+def _extend_run(raw_rows: list[dict], start: int, subject: str) -> int:
+    """Индекс последней строки серии подряд идущих одинаковых слотов (та же
+    дисциплина/преподаватель/аудитория, тот же день, физически следующая строка
+    таблицы) — см. пояснение про "полторы пары" в начале модуля."""
+    r = raw_rows[start]
+    end = start
+    while (
+        end + 1 < len(raw_rows)
+        and raw_rows[end + 1]["row_idx"] == raw_rows[end]["row_idx"] + 1
+        and raw_rows[end + 1]["day_idx"] == r["day_idx"]
+        and normalize_subject(raw_rows[end + 1]["subject_raw"]) == subject
+        and raw_rows[end + 1]["teacher_raw"].strip() == r["teacher_raw"].strip()
+        and raw_rows[end + 1]["room_raw"].strip() == r["room_raw"].strip()
+    ):
+        end += 1
+    return end
 
 
 def table_sheet_label() -> str:
