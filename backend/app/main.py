@@ -20,6 +20,8 @@ from app.conflicts import find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
 from app.paths import app_package_dir, runtime_data_dir
 from app.pipeline import known_groups_from_filenames, load_group_lessons, load_individual_lessons
+from app.update_check import check_for_update
+from app.version import APP_VERSION
 from app.zip_utils import extract_zip
 
 APP_DIR = app_package_dir()
@@ -52,7 +54,11 @@ def upload_form(request: Request):
         recent = db.list_imports(conn)[:10]
     finally:
         conn.close()
-    return templates.TemplateResponse(request, "upload.html", {"recent": recent})
+    return templates.TemplateResponse(request, "upload.html", {
+        "recent": recent,
+        "update_info": check_for_update(),
+        "app_version": APP_VERSION,
+    })
 
 
 @app.post("/import")

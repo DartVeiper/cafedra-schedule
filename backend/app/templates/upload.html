@@ -7,6 +7,13 @@
 </head>
 <body>
 <div class="page">
+  {% if update_info %}
+  <div class="update-banner">
+    Доступна новая версия приложения ({{ update_info.version }}) —
+    <a href="{{ update_info.url }}" target="_blank" rel="noopener">скачать</a>
+  </div>
+  {% endif %}
+
   <h1>Поиск накладок в расписании — кафедра фортепиано</h1>
   <p class="lead">
     Загрузите файлы расписания: ZIP-архив с индивидуальными занятиями (.xls/.xlsx),
@@ -69,6 +76,8 @@
     {% endfor %}
   </ul>
   {% endif %}
+
+  <p class="version-footer">версия {{ app_version }}</p>
 </div>
 </body>
 </html>

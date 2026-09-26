@@ -79,6 +79,19 @@ button:disabled { opacity: 0.6; cursor: default; }
 .recent-list { padding-left: 18px; }
 .recent-list a { color: var(--accent); text-decoration: none; }
 
+.update-banner {
+  background: #eef5ff;
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+}
+.update-banner a { color: var(--accent); font-weight: 600; }
+
+.version-footer { color: var(--muted); font-size: 0.75rem; margin-top: 32px; }
+
 .toggle-form { margin: 16px 0 4px; }
 .toggle-label { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer; }
 .toggle-label input { width: 16px; height: 16px; cursor: pointer; }
