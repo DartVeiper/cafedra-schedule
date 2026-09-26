@@ -35,7 +35,7 @@ GROUP_EXTS = {".doc", ".docx"}
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-app = FastAPI(title="Кафедра фортепиано — поиск накладок в расписании")
+app = FastAPI(title="Проверка расписания — поиск накладок и сверка")
 app.mount("/static", StaticFiles(directory=os.path.join(APP_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
 

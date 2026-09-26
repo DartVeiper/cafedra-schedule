@@ -27,7 +27,7 @@ def _open_browser_when_ready() -> None:
 
 
 def main() -> None:
-    print("Запускается расписание кафедры фортепиано...")
+    print("Запускается программа проверки расписания...")
     print(f"Если браузер не откроется сам, зайдите на http://{HOST}:{PORT}")
     print("Чтобы остановить программу — закройте это окно.")
     threading.Thread(target=_open_browser_when_ready, daemon=True).start()
