@@ -45,6 +45,24 @@ h2 { font-size: 1.15rem; margin-top: 32px; border-bottom: 1px solid var(--border
 .drop-label span { display: block; font-weight: 600; margin-bottom: 8px; }
 .drop-label input { width: 100%; }
 
+.file-list-summary { font-weight: 600; font-size: 0.9rem; }
+.file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.file-list:empty { border: none; }
+.file-list li {
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.file-list li:last-child { border-bottom: none; }
+
 button {
   background: var(--accent);
   color: white;
@@ -56,6 +74,7 @@ button {
   align-self: flex-start;
 }
 button:hover { opacity: 0.9; }
+button:disabled { opacity: 0.6; cursor: default; }
 
 .recent-list { padding-left: 18px; }
 .recent-list a { color: var(--accent); text-decoration: none; }

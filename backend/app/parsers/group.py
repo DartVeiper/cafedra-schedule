@@ -69,19 +69,31 @@ class GroupParseResult:
 def parse_group_docx(path: str) -> GroupParseResult:
     file_name = os.path.basename(path)
     d = docx.Document(path)
-    warnings: list[ParseWarning] = []
 
     group_raw = _find_group_name(d, file_name)
     group_norm = normalize_group(group_raw)
 
     table = _find_schedule_table(d)
     if table is None:
-        warnings.append(ParseWarning(file_name, None, "Не найдена таблица расписания (ожидался заголовок 'ДАТА/ВРЕМЯ')"))
-        return GroupParseResult(file_name, group_raw, group_norm, [], [], warnings)
+        warnings = [ParseWarning(file_name, None, "Не найдена таблица расписания (ожидался заголовок 'ДАТА/ВРЕМЯ')")]
+        return GroupParseResult(file_name, group_raw, group_norm, [], [], [], warnings)
 
+    table_rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+    return rows_to_group_result(table_rows, file_name, group_raw, group_norm)
+
+
+def rows_to_group_result(
+    table_rows: list[list[str]], file_name: str, group_raw: str | None, group_norm: str | None
+) -> GroupParseResult:
+    """Основная логика разбора таблицы расписания — принимает уже извлечённый
+    текст ячеек (как в реальном .docx: table_rows[0] — строка заголовка,
+    остальные — данные), без зависимости от python-docx. Вынесено отдельно от
+    parse_group_docx специально для юнит-тестов на простых списках строк —
+    не нужно собирать настоящий .docx, чтобы проверить склейку "полутора пар"
+    или распознавание служебных строк."""
+    warnings: list[ParseWarning] = []
     raw_rows: list[dict] = []
-    for row_idx, row in enumerate(table.rows[1:], start=1):
-        cells = [c.text.strip() for c in row.cells]
+    for row_idx, cells in enumerate(table_rows[1:], start=1):
         if len(cells) < 5:
             continue
         day_raw, time_raw, subject_raw, teacher_raw, room_raw = cells[:5]

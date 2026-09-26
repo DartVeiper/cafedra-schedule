@@ -18,12 +18,12 @@ from fastapi.templating import Jinja2Templates
 from app import db
 from app.conflicts import find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
+from app.paths import app_package_dir, runtime_data_dir
 from app.pipeline import known_groups_from_filenames, load_group_lessons, load_individual_lessons
 from app.zip_utils import extract_zip
 
-APP_DIR = os.path.dirname(__file__)
-PROJECT_ROOT = os.path.abspath(os.path.join(APP_DIR, "..", ".."))
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+APP_DIR = app_package_dir()
+DATA_DIR = runtime_data_dir()
 UPLOADS_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "db", "cafedra.sqlite3")
 

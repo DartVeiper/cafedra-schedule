@@ -13,14 +13,53 @@
     отдельные файлы .doc/.docx с групповыми занятиями. Можно всё сразу, в любом сочетании.
   </p>
 
-  <form action="/import" method="post" enctype="multipart/form-data" class="upload-form">
+  <form action="/import" method="post" enctype="multipart/form-data" class="upload-form" id="upload-form">
     <label class="drop-label">
       <span>Файлы расписания (ZIP / .xls / .xlsx / .doc / .docx)</span>
-      <input type="file" name="files" multiple required
+      <input type="file" name="files" id="file-input" multiple required
              accept=".zip,.xls,.xlsx,.doc,.docx">
     </label>
-    <button type="submit">Загрузить и найти накладки</button>
+
+    <div id="file-list-summary" class="file-list-summary" hidden></div>
+    <ul id="file-list" class="file-list"></ul>
+
+    <button type="submit" id="submit-btn">Загрузить и найти накладки</button>
   </form>
+
+  <script>
+    const fileInput = document.getElementById('file-input');
+    const fileList = document.getElementById('file-list');
+    const summary = document.getElementById('file-list-summary');
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' Б';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' КБ';
+      return (bytes / 1024 / 1024).toFixed(1) + ' МБ';
+    }
+
+    fileInput.addEventListener('change', () => {
+      const files = Array.from(fileInput.files);
+      fileList.innerHTML = '';
+      if (files.length === 0) {
+        summary.hidden = true;
+        return;
+      }
+      const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+      summary.hidden = false;
+      summary.textContent = `Выбрано файлов: ${files.length} (${formatSize(totalSize)})`;
+      for (const f of files) {
+        const li = document.createElement('li');
+        li.textContent = `${f.name} — ${formatSize(f.size)}`;
+        fileList.appendChild(li);
+      }
+    });
+
+    document.getElementById('upload-form').addEventListener('submit', (e) => {
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Загружаем и анализируем — это может занять минуту...';
+    });
+  </script>
 
   {% if recent %}
   <h2>Недавние проверки</h2>
