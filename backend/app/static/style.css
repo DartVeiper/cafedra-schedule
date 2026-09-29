@@ -76,6 +76,16 @@ button {
 button:hover { opacity: 0.9; }
 button:disabled { opacity: 0.6; cursor: default; }
 
+.failed-files-banner {
+  background: #fdeeee;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+}
+.failed-files-banner ul { margin: 8px 0 0; padding-left: 18px; }
+
 .recent-list { padding-left: 18px; }
 .recent-list a { color: var(--accent); text-decoration: none; }
 

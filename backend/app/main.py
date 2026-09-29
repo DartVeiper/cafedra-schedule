@@ -39,6 +39,24 @@ app = FastAPI(title="Проверка расписания — поиск нак
 app.mount("/static", StaticFiles(directory=os.path.join(APP_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
 
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> HTMLResponse:
+    """Страховка на случай непредвиденной ошибки — вместо голой 'Internal Server
+    Error' показываем понятную страницу. Отдельные файлы при импорте и так не
+    должны сюда попадать (см. pipeline.py), это именно последний рубеж."""
+    return HTMLResponse(
+        "<div style='font-family:sans-serif;max-width:640px;margin:60px auto;padding:0 20px'>"
+        "<h1>Что-то пошло не так</h1>"
+        "<p>Произошла непредвиденная ошибка. Попробуйте повторить действие; "
+        "если это случилось при загрузке файлов — проверьте, что все файлы "
+        "открываются в Excel/Word и не защищены паролем.</p>"
+        f"<p style='color:#888;font-size:0.85em'>{type(exc).__name__}: {exc}</p>"
+        "<p><a href='/'>На главную</a></p>"
+        "</div>",
+        status_code=500,
+    )
+
 CONFLICT_LABELS = {
     ConflictType.TEACHER_DOUBLE_BOOKED: "Преподаватель/концертмейстер в двух местах",
     ConflictType.ROOM_DOUBLE_BOOKED: "Аудитория занята дважды",
@@ -84,7 +102,14 @@ async def do_import(request: Request, files: list[UploadFile] = File(...)):
             tmp_zip_path = os.path.join(work_dir, name)
             with open(tmp_zip_path, "wb") as f:
                 f.write(raw_bytes)
-            result = extract_zip(tmp_zip_path, zip_staging_dir)
+            try:
+                result = extract_zip(tmp_zip_path, zip_staging_dir)
+            except Exception as e:
+                upload_warnings.append(
+                    f"Архив '{name}' повреждён или это не ZIP-файл — пропущен целиком "
+                    f"({type(e).__name__}: {e})"
+                )
+                continue
             zip_rename_notes.extend(result.renamed_notes)
             for extracted_path in result.extracted_paths:
                 ext2 = os.path.splitext(extracted_path)[1].lower()
@@ -109,15 +134,18 @@ async def do_import(request: Request, files: list[UploadFile] = File(...)):
     if os.listdir(individual_dir):
         individual_report = load_individual_lessons(individual_dir, known_groups=known_groups)
 
-    group_lessons, group_warnings = [], []
+    group_lessons, group_warnings, group_failed_files = [], [], []
     if os.listdir(group_dir):
-        group_lessons, group_warnings = load_group_lessons(group_dir, group_docx_dir)
+        group_lessons, group_warnings, group_failed_files = load_group_lessons(group_dir, group_docx_dir)
 
     all_lessons = list(individual_report.lessons if individual_report else []) + group_lessons
+
+    failed_files = (individual_report.failed_files if individual_report else []) + group_failed_files
 
     notes = {
         "upload_warnings": upload_warnings,
         "zip_rename_notes": zip_rename_notes,
+        "failed_files": failed_files,
         "parse_warnings": [w.label() for w in (individual_report.warnings if individual_report else [])] + [w.label() for w in group_warnings],
         "dropped_sheet_notes": individual_report.dropped_sheet_notes if individual_report else [],
         "merge_notes": individual_report.merge_notes if individual_report else [],

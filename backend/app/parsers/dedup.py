@@ -35,6 +35,7 @@ class ImportReport:
     dropped_sheet_notes: list[str] = field(default_factory=list)
     merge_notes: list[str] = field(default_factory=list)
     skipped_sheet_notes: list[str] = field(default_factory=list)
+    failed_files: list[str] = field(default_factory=list)  # файл вообще не удалось прочитать
 
 
 def build_import(sheet_results: list[SheetParseResult]) -> ImportReport:

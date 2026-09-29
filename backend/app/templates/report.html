@@ -10,6 +10,15 @@
   <p><a href="/">&larr; Загрузить другой набор файлов</a></p>
   <h1>Отчёт по накладкам</h1>
 
+  {% if notes.failed_files %}
+  <div class="failed-files-banner">
+    <b>Не удалось прочитать {{ notes.failed_files|length }} файл(ов) — они пропущены, остальные обработаны:</b>
+    <ul>
+      {% for f in notes.failed_files %}<li>{{ f }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
   <div class="summary">
     <div class="summary-card">
       <div class="summary-number">{{ lesson_count }}</div>

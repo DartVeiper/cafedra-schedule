@@ -41,7 +41,7 @@ def describe_lesson(lesson) -> str:
 
 
 def main() -> None:
-    all_lessons, individual_report, group_warnings = load_all_lessons(
+    all_lessons, individual_report, group_warnings, failed_files = load_all_lessons(
         INDIVIDUAL_DIR, GROUP_DIR, GROUP_DOCX_DIR
     )
 
@@ -49,6 +49,10 @@ def main() -> None:
     group_count = len(all_lessons) - len(individual_report.lessons)
     print(f"Групповых занятий: {group_count}")
     print(f"ВСЕГО занятий в базе: {len(all_lessons)}")
+    if failed_files:
+        print(f"\nНе удалось прочитать файлы ({len(failed_files)}):")
+        for f in failed_files:
+            print(" -", f)
 
     conflicts = find_conflicts(all_lessons)
     certain = [c for c in conflicts if c.is_certain]
