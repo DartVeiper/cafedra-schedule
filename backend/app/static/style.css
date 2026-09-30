@@ -99,6 +99,9 @@ button:disabled { opacity: 0.6; cursor: default; }
   font-size: 0.9rem;
 }
 .update-banner a { color: var(--accent); font-weight: 600; }
+.update-form { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.update-btn { padding: 6px 14px; font-size: 0.85rem; align-self: center; }
+.update-note { color: var(--muted); font-size: 0.8rem; }
 
 .version-footer { color: var(--muted); font-size: 0.75rem; margin-top: 32px; }
 
