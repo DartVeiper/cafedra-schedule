@@ -64,7 +64,9 @@ def connect(db_path: str) -> Iterator[sqlite3.Connection]:
 
 def save_import(conn: sqlite3.Connection, import_id: str, lessons: list[Lesson], notes: dict) -> None:
     conn.execute(
-        "INSERT INTO imports (id, created_at, notes_json) VALUES (?, datetime('now'), ?)",
+        # 'localtime' — чтобы в списке "Недавние проверки" время совпадало с
+        # часами на компьютере методиста, а не было в UTC.
+        "INSERT INTO imports (id, created_at, notes_json) VALUES (?, datetime('now', 'localtime'), ?)",
         (import_id, json.dumps(notes, ensure_ascii=False)),
     )
     conn.executemany(
@@ -126,6 +128,13 @@ def load_notes(conn: sqlite3.Connection, import_id: str) -> dict:
 def import_exists(conn: sqlite3.Connection, import_id: str) -> bool:
     row = conn.execute("SELECT 1 FROM imports WHERE id = ?", (import_id,)).fetchone()
     return row is not None
+
+
+def delete_import(conn: sqlite3.Connection, import_id: str) -> None:
+    """Насовсем удаляет проверку (занятия + служебные заметки) — вызывающий
+    сам решает, коммитить ли транзакцию."""
+    conn.execute("DELETE FROM lessons WHERE import_id = ?", (import_id,))
+    conn.execute("DELETE FROM imports WHERE id = ?", (import_id,))
 
 
 def list_imports(conn: sqlite3.Connection) -> list[sqlite3.Row]:

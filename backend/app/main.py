@@ -32,6 +32,11 @@ DB_PATH = os.path.join(DATA_DIR, "db", "cafedra.sqlite3")
 INDIVIDUAL_EXTS = {".xls", ".xlsx"}
 GROUP_EXTS = {".doc", ".docx"}
 
+_MONTHS_RU = [
+    "", "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+]
+
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
@@ -65,6 +70,16 @@ CONFLICT_LABELS = {
 }
 
 
+def _format_ru_datetime(value: str) -> str:
+    """"2026-09-30 14:05:00" -> "30 сентября 2026, 14:05". Если формат
+    неожиданный — возвращаем как есть, не роняя страницу из-за мелочи."""
+    try:
+        dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return value
+    return f"{dt.day} {_MONTHS_RU[dt.month]} {dt.year}, {dt.strftime('%H:%M')}"
+
+
 @app.get("/", response_class=HTMLResponse)
 def upload_form(request: Request):
     conn = db.get_connection(DB_PATH)
@@ -72,8 +87,9 @@ def upload_form(request: Request):
         recent = db.list_imports(conn)[:10]
     finally:
         conn.close()
+    recent_display = [{"id": r["id"], "created_at": _format_ru_datetime(r["created_at"])} for r in recent]
     return templates.TemplateResponse(request, "upload.html", {
-        "recent": recent,
+        "recent": recent_display,
         "update_info": check_for_update(),
         "can_self_update": self_update.can_self_update(),
         "app_version": APP_VERSION,
@@ -202,7 +218,23 @@ async def do_import(request: Request, files: list[UploadFile] = File(...)):
     finally:
         conn.close()
 
+    # Всё нужное (список занятий, имена файлов, предупреждения) уже в БД —
+    # сырые загруженные файлы (реальные ФИО студентов/преподавателей) больше
+    # не нужны и не должны бессрочно копиться на диске методиста.
+    shutil.rmtree(work_dir, ignore_errors=True)
+
     return RedirectResponse(url=f"/report/{import_id}", status_code=303)
+
+
+@app.post("/report/{import_id}/delete")
+def delete_import(import_id: str):
+    conn = db.get_connection(DB_PATH)
+    try:
+        db.delete_import(conn, import_id)
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse(url="/", status_code=303)
 
 
 def _involves_accompanist(c) -> bool:
@@ -378,4 +410,79 @@ def export_xlsx(import_id: str, hide_accompanist: bool = False, person: str = ""
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=nakladki_{import_id}.xlsx"},
+    )
+
+
+def _lesson_line(l) -> str:
+    """Одна строка с описанием занятия — для отчёта в Word (там нет места
+    под многоколоночную вёрстку как в HTML/Excel, зато читается как обычный текст)."""
+    person = l.teacher_name or l.accompanist_name or "—"
+    bits = [person, l.start_time.strftime("%H:%M")]
+    if l.student_name:
+        bits.append(f"студент {l.student_name}")
+    bits.append(f"гр.{l.group_raw or '—'}")
+    bits.append(l.subject or "—")
+    bits.append(f"ауд.{l.room_raw or '—'}")
+    return " · ".join(bits) + f" ({l.source.label()})"
+
+
+def _build_conflict_docx(ctx: dict):
+    """Собирает документ Word с тем же содержимым, что и страница отчёта —
+    чтобы методисту не приходилось вручную копировать страницу и вставлять
+    в Word."""
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading("Отчёт по накладкам", level=1)
+
+    summary_bits = [
+        f"Занятий всего: {ctx['lesson_count']} ({ctx['individual_count']} индивид. + {ctx['group_count']} групп.)",
+        f"Явных накладок: {ctx['certain_count']}",
+        f"Требуют ручной проверки: {ctx['review_count']}",
+    ]
+    if ctx["person"]:
+        summary_bits.append(f"Показаны только накладки: {ctx['person']}")
+    if ctx["hide_accompanist"]:
+        summary_bits.append("Накладки с участием концертмейстера скрыты")
+    doc.add_paragraph(" · ".join(summary_bits))
+
+    if ctx["person"] and ctx["certain_count"] == 0 and ctx["review_count"] == 0:
+        doc.add_paragraph(f"У «{ctx['person']}» накладок не найдено — всё в порядке.")
+
+    day_names = ctx["day_names"]
+    for group in ctx["conflict_groups"]:
+        if not group["conflicts"]:
+            continue
+        doc.add_heading(f"{group['label']} ({len(group['conflicts'])})", level=2)
+        table = doc.add_table(rows=1, cols=4)
+        table.style = "Light Grid Accent 1"
+        hdr = table.rows[0].cells
+        hdr[0].text, hdr[1].text, hdr[2].text, hdr[3].text = "День", "Запись A", "Запись B", "Примечание"
+        for c in group["conflicts"]:
+            row = table.add_row().cells
+            row[0].text = day_names[c.day_of_week]
+            row[1].text = _lesson_line(c.lesson_a)
+            row[2].text = _lesson_line(c.lesson_b)
+            note = ("[Требует проверки] " if not c.is_certain else "") + (c.note or "")
+            row[3].text = note.strip()
+
+    return doc
+
+
+@app.get("/report/{import_id}/export.docx")
+def export_docx(import_id: str, hide_accompanist: bool = False, person: str = ""):
+    ctx = _build_report_context(import_id, hide_accompanist=hide_accompanist, person=person)
+    if ctx is None:
+        return HTMLResponse("Импорт не найден", status_code=404)
+
+    doc = _build_conflict_docx(ctx)
+
+    import io
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename=otchet_nakladki_{import_id}.docx"},
     )

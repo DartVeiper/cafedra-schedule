@@ -80,7 +80,13 @@
   <h2>Недавние проверки</h2>
   <ul class="recent-list">
     {% for row in recent %}
-    <li><a href="/report/{{ row['id'] }}">{{ row['created_at'] }}</a></li>
+    <li>
+      <a href="/report/{{ row['id'] }}">{{ row['created_at'] }}</a>
+      <form method="post" action="/report/{{ row['id'] }}/delete" class="delete-import-form"
+            onsubmit="return confirm('Удалить эту проверку без возможности восстановления?');">
+        <button type="submit" class="delete-link">Удалить</button>
+      </form>
+    </li>
     {% endfor %}
   </ul>
   {% endif %}

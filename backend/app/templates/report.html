@@ -7,7 +7,14 @@
 </head>
 <body>
 <div class="page">
-  <p><a href="/">&larr; Загрузить другой набор файлов</a></p>
+  <p>
+    <a href="/">&larr; Загрузить другой набор файлов</a>
+    ·
+    <form method="post" action="/report/{{ import_id }}/delete" class="delete-import-form"
+          onsubmit="return confirm('Удалить эту проверку без возможности восстановления?');">
+      <button type="submit" class="delete-link">Удалить эту проверку</button>
+    </form>
+  </p>
   <h1>Отчёт по накладкам</h1>
 
   {% if notes.failed_files %}
@@ -53,7 +60,11 @@
   {% set export_qs = [] %}
   {% if hide_accompanist %}{% set _ = export_qs.append('hide_accompanist=true') %}{% endif %}
   {% if person %}{% set _ = export_qs.append('person=' + person|urlencode) %}{% endif %}
-  <p><a class="export-link" href="/report/{{ import_id }}/export.xlsx{% if export_qs %}?{{ export_qs|join('&') }}{% endif %}">Скачать отчёт в Excel</a></p>
+  <p>
+    <a class="export-link" href="/report/{{ import_id }}/export.xlsx{% if export_qs %}?{{ export_qs|join('&') }}{% endif %}">Скачать отчёт в Excel</a>
+    &nbsp;·&nbsp;
+    <a class="export-link" href="/report/{{ import_id }}/export.docx{% if export_qs %}?{{ export_qs|join('&') }}{% endif %}">Скачать отчёт в Word</a>
+  </p>
 
   {% if person and certain_count == 0 and review_count == 0 %}
   <div class="all-clear-banner">У «{{ person }}» накладок не найдено — всё в порядке.</div>

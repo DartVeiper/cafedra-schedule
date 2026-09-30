@@ -86,8 +86,21 @@ button:disabled { opacity: 0.6; cursor: default; }
 }
 .failed-files-banner ul { margin: 8px 0 0; padding-left: 18px; }
 
-.recent-list { padding-left: 18px; }
+.recent-list { padding-left: 18px; list-style: none; margin: 0; }
+.recent-list li { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
 .recent-list a { color: var(--accent); text-decoration: none; }
+
+.delete-import-form { display: inline; margin: 0; }
+.delete-link {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 0.8rem;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.delete-link:hover { opacity: 0.8; }
 
 .update-banner {
   background: #eef5ff;
