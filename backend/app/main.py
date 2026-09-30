@@ -209,7 +209,35 @@ def _involves_accompanist(c) -> bool:
     return bool(c.lesson_a.accompanist_name or c.lesson_b.accompanist_name)
 
 
-def _build_report_context(import_id: str, hide_accompanist: bool = False) -> dict | None:
+def _lesson_names(l) -> list[str]:
+    return [n for n in (l.teacher_name, l.accompanist_name, l.student_name) if n]
+
+
+def _conflict_matches_person(c, needle: str) -> bool:
+    return any(needle == name.casefold() for name in _lesson_names(c.lesson_a) + _lesson_names(c.lesson_b))
+
+
+def _filter_conflicts_by_person(conflicts: list, person: str) -> list:
+    """Оставляет только накладки, где ФИО препода/концертмейстера/студента
+    (с любой из двух сторон накладки) точно совпадает с person — выбор идёт
+    из выпадающего списка готовых ФИО, поэтому сравниваем не подстрокой, а
+    целиком (без учёта регистра). Пустой person означает "без фильтра"."""
+    needle = person.strip().casefold()
+    if not needle:
+        return conflicts
+    return [c for c in conflicts if _conflict_matches_person(c, needle)]
+
+
+def _collect_all_names(lessons: list) -> list[str]:
+    """Все встречающиеся ФИО (препод./концертмейстер/студент) — для
+    автоподсказок в поле поиска на странице отчёта."""
+    names: set[str] = set()
+    for l in lessons:
+        names.update(_lesson_names(l))
+    return sorted(names, key=str.casefold)
+
+
+def _build_report_context(import_id: str, hide_accompanist: bool = False, person: str = "") -> dict | None:
     conn = db.get_connection(DB_PATH)
     try:
         if not db.import_exists(conn, import_id):
@@ -222,6 +250,9 @@ def _build_report_context(import_id: str, hide_accompanist: bool = False) -> dic
     conflicts = find_conflicts(lessons)
     if hide_accompanist:
         conflicts = [c for c in conflicts if not _involves_accompanist(c)]
+    person = person.strip()
+    conflicts = _filter_conflicts_by_person(conflicts, person)
+
     by_type: dict[str, list] = {}
     for c in conflicts:
         by_type.setdefault(c.type.value, []).append(c)
@@ -241,6 +272,8 @@ def _build_report_context(import_id: str, hide_accompanist: bool = False) -> dic
         "certain_count": certain_count,
         "review_count": review_count,
         "hide_accompanist": hide_accompanist,
+        "person": person,
+        "all_names": _collect_all_names(lessons),
         "conflict_groups": [
             {"type": ctype, "label": CONFLICT_LABELS[ctype], "conflicts": by_type.get(ctype.value, [])}
             for ctype in ConflictType
@@ -250,15 +283,15 @@ def _build_report_context(import_id: str, hide_accompanist: bool = False) -> dic
 
 
 @app.get("/report/{import_id}", response_class=HTMLResponse)
-def report(request: Request, import_id: str, hide_accompanist: bool = False):
-    ctx = _build_report_context(import_id, hide_accompanist=hide_accompanist)
+def report(request: Request, import_id: str, hide_accompanist: bool = False, person: str = ""):
+    ctx = _build_report_context(import_id, hide_accompanist=hide_accompanist, person=person)
     if ctx is None:
         return HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
     return templates.TemplateResponse(request, "report.html", ctx)
 
 
 @app.get("/api/report/{import_id}")
-def api_report(import_id: str, hide_accompanist: bool = False):
+def api_report(import_id: str, hide_accompanist: bool = False, person: str = ""):
     conn = db.get_connection(DB_PATH)
     try:
         if not db.import_exists(conn, import_id):
@@ -269,6 +302,7 @@ def api_report(import_id: str, hide_accompanist: bool = False):
     conflicts = find_conflicts(lessons)
     if hide_accompanist:
         conflicts = [c for c in conflicts if not _involves_accompanist(c)]
+    conflicts = _filter_conflicts_by_person(conflicts, person)
 
     def lesson_json(l):
         return {
@@ -293,7 +327,7 @@ def api_report(import_id: str, hide_accompanist: bool = False):
 
 
 @app.get("/report/{import_id}/export.xlsx")
-def export_xlsx(import_id: str, hide_accompanist: bool = False):
+def export_xlsx(import_id: str, hide_accompanist: bool = False, person: str = ""):
     import openpyxl
     from openpyxl.utils import get_column_letter
 
@@ -307,6 +341,7 @@ def export_xlsx(import_id: str, hide_accompanist: bool = False):
     conflicts = find_conflicts(lessons)
     if hide_accompanist:
         conflicts = [c for c in conflicts if not _involves_accompanist(c)]
+    conflicts = _filter_conflicts_by_person(conflicts, person)
 
     wb = openpyxl.Workbook()
     ws = wb.active

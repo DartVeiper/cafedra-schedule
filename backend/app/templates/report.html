@@ -39,9 +39,25 @@
       <input type="checkbox" name="hide_accompanist" value="true" onchange="this.form.submit()" {% if hide_accompanist %}checked{% endif %}>
       Скрыть накладки с участием концертмейстера
     </label>
+    <label class="person-filter-label">
+      Показать только по ФИО:
+      <select name="person" onchange="this.form.submit()">
+        <option value="">— все —</option>
+        {% for n in all_names %}
+        <option value="{{ n }}" {% if n == person %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+    </label>
   </form>
 
-  <p><a class="export-link" href="/report/{{ import_id }}/export.xlsx{% if hide_accompanist %}?hide_accompanist=true{% endif %}">Скачать отчёт в Excel</a></p>
+  {% set export_qs = [] %}
+  {% if hide_accompanist %}{% set _ = export_qs.append('hide_accompanist=true') %}{% endif %}
+  {% if person %}{% set _ = export_qs.append('person=' + person|urlencode) %}{% endif %}
+  <p><a class="export-link" href="/report/{{ import_id }}/export.xlsx{% if export_qs %}?{{ export_qs|join('&') }}{% endif %}">Скачать отчёт в Excel</a></p>
+
+  {% if person and certain_count == 0 and review_count == 0 %}
+  <div class="all-clear-banner">У «{{ person }}» накладок не найдено — всё в порядке.</div>
+  {% endif %}
 
   {% for group in conflict_groups %}
     {% if group.conflicts %}
