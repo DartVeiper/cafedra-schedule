@@ -24,10 +24,20 @@ def app_package_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _base_dir() -> str:
+    if is_frozen():
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
 def runtime_data_dir() -> str:
     """Папка для БД и загруженных файлов — переживает перезапуски и обновления."""
-    if is_frozen():
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    return os.path.join(base, "data")
+    return os.path.join(_base_dir(), "data")
+
+
+def cabinets_config_path() -> str:
+    """Реестр кабинетов кафедры (app/cabinets.py) — НАМЕРЕННО хранится не в
+    data/, а в соседней папке config/: список кабинетов не привязан к
+    конкретной проверке расписания и должен пережить очистку/удаление data/
+    (историю проверок), в отличие от самих проверок."""
+    return os.path.join(_base_dir(), "config", "cabinets.json")

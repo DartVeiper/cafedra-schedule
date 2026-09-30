@@ -186,3 +186,27 @@ button:disabled { opacity: 0.6; cursor: default; }
 details { margin: 6px 0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
 details summary { cursor: pointer; font-weight: 600; }
 details ul { margin: 8px 0 0; padding-left: 18px; font-size: 0.85rem; color: var(--muted); }
+
+.cabinets-list { list-style: none; padding: 0; margin: 12px 0; max-width: 420px; }
+.cabinets-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.cabinets-list a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.add-link { background: none; border: none; color: var(--accent); text-decoration: underline; cursor: pointer; font-size: 0.85rem; padding: 0; }
+
+.add-room-form { display: flex; gap: 10px; margin: 16px 0; }
+.add-room-form input[type="text"] { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; }
+
+.cabinet-days { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; align-items: flex-start; }
+.cabinet-day-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  min-width: 220px;
+}
+.cabinet-day-card h2 { margin-top: 0; font-size: 1rem; border: none; padding: 0; }
+.cabinet-day-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.cabinet-day-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.cabinet-day-table tr:last-child td { border-bottom: none; }
+.slot-time { color: var(--muted); white-space: nowrap; width: 56px; }
+.slot-occupied .slot-info { font-weight: 600; }
+.slot-free .slot-info { color: var(--muted); font-style: italic; }

@@ -10,15 +10,16 @@ import shutil
 import uuid
 from datetime import datetime
 
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app import cabinets as cabinets_module
 from app import db, self_update
 from app.conflicts import find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
-from app.paths import app_package_dir, runtime_data_dir
+from app.paths import app_package_dir, cabinets_config_path, runtime_data_dir
 from app.pipeline import known_groups_from_filenames, load_group_lessons, load_individual_lessons
 from app.update_check import check_for_update
 from app.version import APP_VERSION
@@ -28,6 +29,7 @@ APP_DIR = app_package_dir()
 DATA_DIR = runtime_data_dir()
 UPLOADS_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "db", "cafedra.sqlite3")
+CABINETS_PATH = cabinets_config_path()
 
 INDIVIDUAL_EXTS = {".xls", ".xlsx"}
 GROUP_EXTS = {".doc", ".docx"}
@@ -235,6 +237,64 @@ def delete_import(import_id: str):
     finally:
         conn.close()
     return RedirectResponse(url="/", status_code=303)
+
+
+def _load_lessons_or_none(import_id: str) -> list | None:
+    conn = db.get_connection(DB_PATH)
+    try:
+        if not db.import_exists(conn, import_id):
+            return None
+        return db.load_lessons(conn, import_id)
+    finally:
+        conn.close()
+
+
+@app.get("/report/{import_id}/cabinets", response_class=HTMLResponse)
+def cabinets_page(request: Request, import_id: str):
+    lessons = _load_lessons_or_none(import_id)
+    if lessons is None:
+        return HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
+
+    config = cabinets_module.load_config(CABINETS_PATH)
+    registered = cabinets_module.get_rooms(config)
+    suggested = sorted(cabinets_module.suggest_rooms(lessons) - set(registered), key=str.casefold)
+
+    return templates.TemplateResponse(request, "cabinets.html", {
+        "import_id": import_id,
+        "rooms": registered,
+        "suggested_rooms": suggested,
+    })
+
+
+@app.post("/report/{import_id}/cabinets/add")
+def cabinets_add(import_id: str, room: str = Form(...)):
+    config = cabinets_module.load_config(CABINETS_PATH)
+    cabinets_module.add_room(config, room)
+    cabinets_module.save_config(CABINETS_PATH, config)
+    return RedirectResponse(url=f"/report/{import_id}/cabinets", status_code=303)
+
+
+@app.post("/report/{import_id}/cabinets/remove")
+def cabinets_remove(import_id: str, room: str = Form(...)):
+    config = cabinets_module.load_config(CABINETS_PATH)
+    cabinets_module.remove_room(config, room)
+    cabinets_module.save_config(CABINETS_PATH, config)
+    return RedirectResponse(url=f"/report/{import_id}/cabinets", status_code=303)
+
+
+@app.get("/report/{import_id}/cabinets/{room}", response_class=HTMLResponse)
+def cabinet_schedule(request: Request, import_id: str, room: str):
+    lessons = _load_lessons_or_none(import_id)
+    if lessons is None:
+        return HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
+
+    schedule = cabinets_module.build_room_schedule(lessons, room)
+    return templates.TemplateResponse(request, "cabinet_schedule.html", {
+        "import_id": import_id,
+        "room": room,
+        "schedule": schedule,
+        "day_names": DAY_NAMES_RU,
+    })
 
 
 def _involves_accompanist(c) -> bool:

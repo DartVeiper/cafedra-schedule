@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Кабинет {{ room }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="page">
+  <p><a href="/report/{{ import_id }}/cabinets">&larr; Все кабинеты</a></p>
+  <h1>Кабинет {{ room }}</h1>
+  <p class="lead">
+    Слоты собраны по временам начала индивидуальных занятий кафедры в этой
+    проверке (единой сетки "звонков" в файлах нет). "Занято" — если кабинет в
+    это время занят любым занятием, индивидуальным или групповым.
+  </p>
+
+  {% if not schedule %}
+  <p>В этой проверке нет данных для сетки — не найдено индивидуальных занятий.</p>
+  {% else %}
+  <div class="cabinet-days">
+    {% for day in range(6) %}
+      {% if schedule.get(day) %}
+      <div class="cabinet-day-card">
+        <h2>{{ day_names[day] }}</h2>
+        <table class="cabinet-day-table">
+          {% for slot in schedule[day] %}
+          <tr class="{{ 'slot-occupied' if slot.occupied_by else 'slot-free' }}">
+            <td class="slot-time">{{ slot.start }}</td>
+            <td class="slot-info">
+              {% if slot.occupied_by %}
+                {{ slot.occupied_by.teacher_name or slot.occupied_by.accompanist_name or slot.occupied_by.subject or '—' }}
+                {% if slot.occupied_by.student_name %}· {{ slot.occupied_by.student_name }}{% endif %}
+                {% if slot.occupied_by.group_raw %}· гр.{{ slot.occupied_by.group_raw }}{% endif %}
+                {% if slot.occupied_by.teacher_name or slot.occupied_by.accompanist_name %}
+                  {% if slot.occupied_by.subject %}· {{ slot.occupied_by.subject }}{% endif %}
+                {% endif %}
+              {% else %}
+                свободно
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+</body>
+</html>

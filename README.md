@@ -89,6 +89,7 @@ backend/app/
   main.py           — FastAPI: загрузка, отчёт, экспорт в Excel
   update_check.py   — проверка новых версий через GitHub Releases
   self_update.py    — скачивание и установка обновления "на месте" (замена .exe)
+  cabinets.py       — реестр кабинетов кафедры + сетка занятости (вкладка "Кабинеты")
 backend/tests/      — pytest, регрессионные тесты на реальные кейсы кафедры
 backend/desktop_app.py, build_exe.bat — сборка в standalone .exe
 ```
