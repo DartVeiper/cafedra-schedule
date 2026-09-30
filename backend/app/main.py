@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app import db
+from app import db, self_update
 from app.conflicts import find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
 from app.paths import app_package_dir, runtime_data_dir
@@ -75,8 +75,48 @@ def upload_form(request: Request):
     return templates.TemplateResponse(request, "upload.html", {
         "recent": recent,
         "update_info": check_for_update(),
+        "can_self_update": self_update.can_self_update(),
         "app_version": APP_VERSION,
     })
+
+
+@app.post("/update/apply", response_class=HTMLResponse)
+def apply_update():
+    """Скачивает и устанавливает обновление поверх текущего .exe (см. self_update.py).
+    Ссылку на скачивание берём из собственной кэшированной проверки, а не от
+    клиента — чтобы нельзя было подсунуть форме произвольный URL для скачивания."""
+    if not self_update.can_self_update():
+        return HTMLResponse(
+            "<p>Самообновление доступно только в собранной версии .exe на Windows. "
+            "Для запуска из исходников используйте <code>git pull</code> "
+            "(см. «Обновить и запустить.bat»).</p><p><a href='/'>Назад</a></p>",
+            status_code=400,
+        )
+    info = check_for_update(force=True)
+    if not info or not info.get("download_url"):
+        return HTMLResponse(
+            "<p>Обновление не найдено — возможно, его уже установили, или к "
+            "релизу на GitHub не приложен .exe-файл.</p><p><a href='/'>Назад</a></p>",
+            status_code=400,
+        )
+    try:
+        self_update.start_update(info["download_url"])
+    except Exception as e:
+        return HTMLResponse(
+            f"<p>Не удалось скачать обновление: {type(e).__name__}: {e}. "
+            "Проверьте подключение к интернету и попробуйте ещё раз.</p>"
+            "<p><a href='/'>Назад</a></p>",
+            status_code=500,
+        )
+    self_update.schedule_exit()
+    return (
+        "<div style='font-family:sans-serif;max-width:560px;margin:80px auto;padding:0 20px'>"
+        f"<h1>Устанавливаем версию {info['version']}</h1>"
+        "<p>Программа сейчас закроется и перезапустится сама — окно консоли "
+        "и вкладка браузера откроются заново автоматически через несколько секунд. "
+        "Ничего нажимать не нужно, просто подождите.</p>"
+        "</div>"
+    )
 
 
 @app.post("/import")

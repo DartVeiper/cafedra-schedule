@@ -33,8 +33,10 @@ def _is_newer(remote: str, local: str) -> bool:
 
 
 def check_for_update(force: bool = False) -> dict | None:
-    """{'version': 'v0.2.0', 'url': 'https://github.com/.../releases/tag/v0.2.0'}
-    если есть более новый релиз, иначе None. Результат кэшируется на час."""
+    """{'version': 'v0.2.0', 'url': 'https://github.com/.../releases/tag/v0.2.0',
+    'download_url': 'https://github.com/.../CafedraSchedule.exe'} если есть более
+    новый релиз, иначе None. 'download_url' — None, если к релизу не приложен
+    .exe (например, релиз только с исходниками). Результат кэшируется на час."""
     now = time.time()
     if not force and now - _cache["checked_at"] < _CACHE_TTL_SECONDS:
         return _cache["result"]
@@ -61,7 +63,13 @@ def _fetch_latest_release() -> dict | None:
     html_url = data.get("html_url")
     if not tag or not html_url:
         return None
+    if not _is_newer(tag, APP_VERSION):
+        return None
 
-    if _is_newer(tag, APP_VERSION):
-        return {"version": tag, "url": html_url}
-    return None
+    download_url = None
+    for asset in data.get("assets") or []:
+        if str(asset.get("name", "")).lower().endswith(".exe"):
+            download_url = asset.get("browser_download_url")
+            break
+
+    return {"version": tag, "url": html_url, "download_url": download_url}

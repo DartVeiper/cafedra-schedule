@@ -9,8 +9,16 @@
 <div class="page">
   {% if update_info %}
   <div class="update-banner">
+    {% if update_info.download_url and can_self_update %}
+    <form action="/update/apply" method="post" class="update-form">
+      <span>Доступна новая версия приложения ({{ update_info.version }}).</span>
+      <button type="submit" class="update-btn">Скачать и установить</button>
+      <span class="update-note">Программа скачает файл и перезапустится сама — старую копию менять не нужно.</span>
+    </form>
+    {% else %}
     Доступна новая версия приложения ({{ update_info.version }}) —
     <a href="{{ update_info.url }}" target="_blank" rel="noopener">скачать</a>
+    {% endif %}
   </div>
   {% endif %}
 
