@@ -19,13 +19,14 @@ from app import cabinets as cabinets_module
 from app import db, self_update
 from app.conflicts import find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
-from app.paths import app_package_dir, cabinets_config_path, runtime_data_dir
+from app.paths import app_package_dir, cabinets_config_path, migrate_legacy_storage, runtime_data_dir
 from app.pipeline import known_groups_from_filenames, load_group_lessons, load_individual_lessons
 from app.update_check import check_for_update
 from app.version import APP_VERSION
 from app.zip_utils import extract_zip
 
 APP_DIR = app_package_dir()
+migrate_legacy_storage()  # переносит data/ и config/ со старого места (рядом с .exe), если ещё там
 DATA_DIR = runtime_data_dir()
 UPLOADS_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "db", "cafedra.sqlite3")
