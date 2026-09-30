@@ -6,13 +6,15 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+{% macro lesson_label(l) -%}
+{{ l.teacher_name or l.accompanist_name or l.subject or '—' }}{% if l.student_name %} · {{ l.student_name }}{% endif %}{% if l.group_raw %} · гр.{{ l.group_raw }}{% endif %}{% if (l.teacher_name or l.accompanist_name) and l.subject %} · {{ l.subject }}{% endif %}
+{%- endmacro %}
 <div class="page">
   <p><a href="/report/{{ import_id }}/cabinets">&larr; Все кабинеты</a></p>
   <h1>Кабинет {{ room }}</h1>
   <p class="lead">
     Слоты собраны по временам начала индивидуальных занятий кафедры в этой
-    проверке (единой сетки "звонков" в файлах нет). Наведите мышью на ячейку,
-    чтобы увидеть, кто занял слот.
+    проверке (единой сетки "звонков" в файлах нет).
   </p>
 
   <div class="cabinet-legend">
@@ -39,28 +41,18 @@
         {% for day in days_present %}
           {% set slot = schedule_by_time.get(day, {}).get(t) %}
           {% if slot is none %}
-          <td class="grid-cell cell-none"></td>
+          <td class="grid-cell cell-none">&nbsp;</td>
           {% elif slot.conflict_with %}
           <td class="grid-cell cell-conflict">
-            <div class="cell-tooltip">
-              <b>Накладка в это время:</b><br>
-              {{ slot.occupied_by.teacher_name or slot.occupied_by.accompanist_name or slot.occupied_by.subject or '—' }}
-              {% if slot.occupied_by.student_name %}({{ slot.occupied_by.student_name }}){% endif %}
-              <br>&times;<br>
-              {{ slot.conflict_with.teacher_name or slot.conflict_with.accompanist_name or slot.conflict_with.subject or '—' }}
-              {% if slot.conflict_with.student_name %}({{ slot.conflict_with.student_name }}){% endif %}
-            </div>
+            <b>⚠ Накладка</b><br>
+            {{ lesson_label(slot.occupied_by) }}
+            <br>&times;<br>
+            {{ lesson_label(slot.conflict_with) }}
           </td>
           {% elif slot.occupied_by %}
-          <td class="grid-cell cell-occupied">
-            <div class="cell-tooltip">
-              {{ slot.occupied_by.teacher_name or slot.occupied_by.accompanist_name or slot.occupied_by.subject or '—' }}
-              {% if slot.occupied_by.student_name %}· {{ slot.occupied_by.student_name }}{% endif %}
-              {% if slot.occupied_by.group_raw %}· гр.{{ slot.occupied_by.group_raw }}{% endif %}
-            </div>
-          </td>
+          <td class="grid-cell cell-occupied">{{ lesson_label(slot.occupied_by) }}</td>
           {% else %}
-          <td class="grid-cell cell-free"></td>
+          <td class="grid-cell cell-free">&nbsp;</td>
           {% endif %}
         {% endfor %}
       </tr>
