@@ -72,3 +72,43 @@ def test_build_room_schedule_room_with_no_occupants_is_all_free(make_lesson):
     schedule = cabinets.build_room_schedule([seed], "999")
 
     assert all(slot["occupied_by"] is None for slot in schedule[0])
+
+
+def test_build_room_schedule_marks_real_room_double_booking_as_conflict(make_lesson):
+    a = make_lesson(day=0, start="10:15", room="418", teacher="Иванов И.И.", student="Студент А")
+    b = make_lesson(day=0, start="10:15", room="418", teacher="Петров П.П.", student="Студент Б")
+
+    schedule = cabinets.build_room_schedule([a, b], "418")
+
+    slot = schedule[0][0]
+    assert slot["start"] == "10:15"
+    assert slot["conflict_with"] is not None
+    # Lesson не хэшируемый (dataclass с eq=True) — сравниваем без set()
+    got = (slot["occupied_by"], slot["conflict_with"])
+    assert got == (a, b) or got == (b, a)
+
+
+def test_build_room_schedule_no_conflict_for_single_occupant(make_lesson):
+    a = make_lesson(day=0, start="10:15", room="418")
+
+    schedule = cabinets.build_room_schedule([a], "418")
+
+    assert schedule[0][0]["conflict_with"] is None
+
+
+def test_merge_time_axis_combines_times_across_days(make_lesson):
+    a = make_lesson(day=0, start="10:15", room="101")
+    b = make_lesson(day=1, start="11:00", room="101")
+
+    schedule = cabinets.build_room_schedule([a, b], "101")
+
+    assert cabinets.merge_time_axis(schedule) == ["10:15", "11:00"]
+
+
+def test_index_by_time_allows_lookup_by_day_and_time(make_lesson):
+    a = make_lesson(day=0, start="10:15", room="101")
+
+    schedule = cabinets.build_room_schedule([a], "101")
+    indexed = cabinets.index_by_time(schedule)
+
+    assert indexed[0]["10:15"]["occupied_by"] is a

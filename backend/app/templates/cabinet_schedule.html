@@ -11,41 +11,62 @@
   <h1>Кабинет {{ room }}</h1>
   <p class="lead">
     Слоты собраны по временам начала индивидуальных занятий кафедры в этой
-    проверке (единой сетки "звонков" в файлах нет). "Занято" — если кабинет в
-    это время занят любым занятием, индивидуальным или групповым.
+    проверке (единой сетки "звонков" в файлах нет). Наведите мышью на ячейку,
+    чтобы увидеть, кто занял слот.
   </p>
 
-  {% if not schedule %}
+  <div class="cabinet-legend">
+    <span class="legend-item"><span class="legend-swatch cell-free"></span>свободно</span>
+    <span class="legend-item"><span class="legend-swatch cell-occupied"></span>занято</span>
+    <span class="legend-item"><span class="legend-swatch cell-conflict"></span>накладка</span>
+    <span class="legend-item"><span class="legend-swatch cell-none"></span>нет слота в этот день</span>
+  </div>
+
+  {% if not time_axis %}
   <p>В этой проверке нет данных для сетки — не найдено индивидуальных занятий.</p>
   {% else %}
-  <div class="cabinet-days">
-    {% for day in range(6) %}
-      {% if schedule.get(day) %}
-      <div class="cabinet-day-card">
-        <h2>{{ day_names[day] }}</h2>
-        <table class="cabinet-day-table">
-          {% for slot in schedule[day] %}
-          <tr class="{{ 'slot-occupied' if slot.occupied_by else 'slot-free' }}">
-            <td class="slot-time">{{ slot.start }}</td>
-            <td class="slot-info">
-              {% if slot.occupied_by %}
-                {{ slot.occupied_by.teacher_name or slot.occupied_by.accompanist_name or slot.occupied_by.subject or '—' }}
-                {% if slot.occupied_by.student_name %}· {{ slot.occupied_by.student_name }}{% endif %}
-                {% if slot.occupied_by.group_raw %}· гр.{{ slot.occupied_by.group_raw }}{% endif %}
-                {% if slot.occupied_by.teacher_name or slot.occupied_by.accompanist_name %}
-                  {% if slot.occupied_by.subject %}· {{ slot.occupied_by.subject }}{% endif %}
-                {% endif %}
-              {% else %}
-                свободно
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </table>
-      </div>
-      {% endif %}
-    {% endfor %}
-  </div>
+  <table class="cabinet-grid">
+    <thead>
+      <tr>
+        <th></th>
+        {% for day in days_present %}<th>{{ day_names[day] }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in time_axis %}
+      <tr>
+        <td class="grid-time">{{ t }}</td>
+        {% for day in days_present %}
+          {% set slot = schedule_by_time.get(day, {}).get(t) %}
+          {% if slot is none %}
+          <td class="grid-cell cell-none"></td>
+          {% elif slot.conflict_with %}
+          <td class="grid-cell cell-conflict">
+            <div class="cell-tooltip">
+              <b>Накладка в это время:</b><br>
+              {{ slot.occupied_by.teacher_name or slot.occupied_by.accompanist_name or slot.occupied_by.subject or '—' }}
+              {% if slot.occupied_by.student_name %}({{ slot.occupied_by.student_name }}){% endif %}
+              <br>&times;<br>
+              {{ slot.conflict_with.teacher_name or slot.conflict_with.accompanist_name or slot.conflict_with.subject or '—' }}
+              {% if slot.conflict_with.student_name %}({{ slot.conflict_with.student_name }}){% endif %}
+            </div>
+          </td>
+          {% elif slot.occupied_by %}
+          <td class="grid-cell cell-occupied">
+            <div class="cell-tooltip">
+              {{ slot.occupied_by.teacher_name or slot.occupied_by.accompanist_name or slot.occupied_by.subject or '—' }}
+              {% if slot.occupied_by.student_name %}· {{ slot.occupied_by.student_name }}{% endif %}
+              {% if slot.occupied_by.group_raw %}· гр.{{ slot.occupied_by.group_raw }}{% endif %}
+            </div>
+          </td>
+          {% else %}
+          <td class="grid-cell cell-free"></td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
   {% endif %}
 </div>
 </body>

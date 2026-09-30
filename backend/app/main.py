@@ -293,7 +293,9 @@ def cabinet_schedule(request: Request, import_id: str, room: str):
     return templates.TemplateResponse(request, "cabinet_schedule.html", {
         "import_id": import_id,
         "room": room,
-        "schedule": schedule,
+        "time_axis": cabinets_module.merge_time_axis(schedule),
+        "schedule_by_time": cabinets_module.index_by_time(schedule),
+        "days_present": sorted(schedule.keys()),
         "day_names": DAY_NAMES_RU,
     })
 

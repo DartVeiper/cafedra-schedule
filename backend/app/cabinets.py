@@ -20,7 +20,8 @@ from __future__ import annotations
 import json
 import os
 
-from app.models import INDIVIDUAL_LESSON_MINUTES, Lesson, LessonType
+from app.conflicts import find_conflicts
+from app.models import INDIVIDUAL_LESSON_MINUTES, ConflictType, Lesson, LessonType
 
 DEFAULT_DEPARTMENT_ID = "default"
 
@@ -91,9 +92,20 @@ def _overlaps(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
 
 
 def build_room_schedule(lessons: list[Lesson], room: str) -> dict[int, list[dict]]:
-    """{день_недели: [{"start": "10:15", "occupied_by": Lesson|None}, ...]},
-    только для дней, где вообще есть индивидуальные занятия у кафедры."""
+    """{день_недели: [{"start": "10:15", "occupied_by": Lesson|None,
+    "conflict_with": Lesson|None}, ...]}, только для дней, где вообще есть
+    индивидуальные занятия у кафедры. "conflict_with" заполнен, если в этом
+    слоте кабинет реально занят дважды (переиспользуем find_conflicts —
+    ту же логику, что и в основном отчёте) — для подсветки красным и
+    подсказки при наведении."""
     room_lessons = [l for l in lessons if l.room_normalized == room]
+
+    # ROOM_DOUBLE_BOOKED группируется в conflicts.py по room_normalized, так что
+    # если lesson_a в этом кабинете — lesson_b тоже в нём же.
+    room_conflicts = [
+        c for c in find_conflicts(lessons)
+        if c.type == ConflictType.ROOM_DOUBLE_BOOKED and c.lesson_a.room_normalized == room
+    ]
 
     slot_starts_by_day: dict[int, set[int]] = {}
     for l in lessons:
@@ -105,13 +117,41 @@ def build_room_schedule(lessons: list[Lesson], room: str) -> dict[int, list[dict
         day_slots = []
         for start in sorted(starts):
             end = start + INDIVIDUAL_LESSON_MINUTES
-            occupant = next(
-                (
-                    l for l in room_lessons
-                    if l.day_of_week == day and _overlaps(start, end, l.start_minutes, l.end_minutes)
-                ),
-                None,
-            )
-            day_slots.append({"start": f"{start // 60:02d}:{start % 60:02d}", "occupied_by": occupant})
+            occupant = None
+            conflict_with = None
+            for c in room_conflicts:
+                if c.day_of_week != day:
+                    continue
+                overlap_start = max(c.lesson_a.start_minutes, c.lesson_b.start_minutes)
+                overlap_end = min(c.lesson_a.end_minutes, c.lesson_b.end_minutes)
+                if _overlaps(start, end, overlap_start, overlap_end):
+                    occupant, conflict_with = c.lesson_a, c.lesson_b
+                    break
+            if occupant is None:
+                occupant = next(
+                    (
+                        l for l in room_lessons
+                        if l.day_of_week == day and _overlaps(start, end, l.start_minutes, l.end_minutes)
+                    ),
+                    None,
+                )
+            day_slots.append({
+                "start": f"{start // 60:02d}:{start % 60:02d}",
+                "occupied_by": occupant,
+                "conflict_with": conflict_with,
+            })
         schedule[day] = day_slots
     return schedule
+
+
+def merge_time_axis(schedule: dict[int, list[dict]]) -> list[str]:
+    """Объединённый по всем дням список времён слотов — для отрисовки единой
+    сетки (дни — столбцы, время — строки), как в календаре."""
+    times = {slot["start"] for day_slots in schedule.values() for slot in day_slots}
+    return sorted(times)
+
+
+def index_by_time(schedule: dict[int, list[dict]]) -> dict[int, dict[str, dict]]:
+    """{день: {"10:15": slot, ...}} — для поиска слота по (день, время) при
+    отрисовке единой сетки."""
+    return {day: {slot["start"]: slot for slot in day_slots} for day, day_slots in schedule.items()}
