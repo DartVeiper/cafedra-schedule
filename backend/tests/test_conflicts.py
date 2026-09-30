@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from app.conflicts import find_conflicts
-from app.models import ConflictType
+from app.models import ConflictType, LessonType
 
 
 def test_teacher_plus_accompanist_same_room_is_not_a_conflict(make_lesson):
@@ -96,6 +96,28 @@ def test_room_double_booked_two_unrelated_lessons(make_lesson):
 
     assert len(conflicts) == 1
     assert conflicts[0].type == ConflictType.ROOM_DOUBLE_BOOKED
+
+
+def test_teacher_double_booked_across_academic_title_variants(make_lesson):
+    """Реальная находка на данных кафедры: один и тот же преподаватель в
+    индивидуальном файле (Формат 1) указан просто 'Долгачева С.А.', а в
+    групповом (Формат 2) — 'доц. Долгачева С.А.' (звание из колонки 'ФИО
+    преподавателя'). Без нормализации звания это считались бы два разных
+    человека, и реальная накладка (ведёт групповую лекцию и одновременно
+    индивидуальное занятие) осталась бы незамеченной."""
+    individual_lesson = make_lesson(
+        teacher="Долгачева С.А.", room="101", group="91Ф", student="Студент А",
+        day=0, start="12:00", duration=45, lesson_type=LessonType.INDIVIDUAL,
+    )
+    group_lecture = make_lesson(
+        teacher="доц. Долгачева С.А.", room="202", group="41Ф", student=None,
+        day=0, start="12:00", duration=90, lesson_type=LessonType.GROUP,
+    )
+
+    conflicts = find_conflicts([individual_lesson, group_lecture])
+
+    assert len(conflicts) == 1
+    assert conflicts[0].type == ConflictType.TEACHER_DOUBLE_BOOKED
 
 
 def test_no_conflict_when_times_dont_overlap(make_lesson):

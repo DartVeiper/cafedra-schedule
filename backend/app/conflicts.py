@@ -21,6 +21,7 @@ import re
 from collections import defaultdict
 
 from app.models import Conflict, ConflictType, Lesson, LessonType
+from app.parsers.common import strip_academic_title
 
 _SUBGROUP_RE = re.compile(r"подгруппа", re.IGNORECASE)
 
@@ -39,7 +40,14 @@ def _overlaps(a: Lesson, b: Lesson) -> bool:
 
 
 def _person_key(lesson: Lesson) -> str | None:
-    return lesson.teacher_name or lesson.accompanist_name
+    """Ключ для сопоставления 'один и тот же человек' между записями. Убираем
+    учёное звание/должность (доц./проф./ст.преп./асс.) и регистр — иначе
+    'Долгачева С.А.' (Формат 1) и 'доц. Долгачева С.А.' (Формат 2, тот же
+    человек) считались бы разными людьми и реальная накладка пропускалась бы."""
+    name = lesson.teacher_name or lesson.accompanist_name
+    if name is None:
+        return None
+    return strip_academic_title(name).casefold()
 
 
 def _lesson_role(lesson: Lesson) -> str | None:

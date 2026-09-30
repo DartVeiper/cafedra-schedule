@@ -19,6 +19,7 @@ from app import cabinets as cabinets_module
 from app import db, self_update
 from app.conflicts import find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
+from app.parsers.common import strip_academic_title
 from app.paths import app_package_dir, cabinets_config_path, migrate_legacy_storage, runtime_data_dir
 from app.pipeline import known_groups_from_filenames, load_group_lessons, load_individual_lessons
 from app.update_check import check_for_update
@@ -308,28 +309,44 @@ def _lesson_names(l) -> list[str]:
     return [n for n in (l.teacher_name, l.accompanist_name, l.student_name) if n]
 
 
-def _conflict_matches_person(c, needle: str) -> bool:
-    return any(needle == name.casefold() for name in _lesson_names(c.lesson_a) + _lesson_names(c.lesson_b))
+def _person_match_key(name: str) -> str:
+    """Ключ сравнения ФИО для фильтра: без учёного звания и регистра — та же
+    нормализация, что и в conflicts.py, чтобы 'доц. Долгачева С.А.' и
+    'Долгачева С.А.' считались одним человеком (см. strip_academic_title)."""
+    return strip_academic_title(name).casefold()
+
+
+def _conflict_matches_person(c, needle_key: str) -> bool:
+    return any(
+        _person_match_key(name) == needle_key
+        for name in _lesson_names(c.lesson_a) + _lesson_names(c.lesson_b)
+    )
 
 
 def _filter_conflicts_by_person(conflicts: list, person: str) -> list:
     """Оставляет только накладки, где ФИО препода/концертмейстера/студента
-    (с любой из двух сторон накладки) точно совпадает с person — выбор идёт
-    из выпадающего списка готовых ФИО, поэтому сравниваем не подстрокой, а
-    целиком (без учёта регистра). Пустой person означает "без фильтра"."""
-    needle = person.strip().casefold()
-    if not needle:
+    (с любой из двух сторон накладки) совпадает с person без учёта учёного
+    звания и регистра — выбор идёт из выпадающего списка готовых ФИО, поэтому
+    сравниваем не подстрокой, а целиком. Пустой person означает "без фильтра"."""
+    needle_key = _person_match_key(person.strip())
+    if not needle_key:
         return conflicts
-    return [c for c in conflicts if _conflict_matches_person(c, needle)]
+    return [c for c in conflicts if _conflict_matches_person(c, needle_key)]
 
 
 def _collect_all_names(lessons: list) -> list[str]:
-    """Все встречающиеся ФИО (препод./концертмейстер/студент) — для
-    автоподсказок в поле поиска на странице отчёта."""
-    names: set[str] = set()
+    """Все встречающиеся ФИО (препод./концертмейстер/студент) — для выпадающего
+    списка на странице отчёта. 'доц. Х' и 'Х' — один и тот же человек (см.
+    strip_academic_title), схлопываем в одну запись в списке; предпочитаем
+    форму без звания как более узнаваемую методисту."""
+    by_key: dict[str, str] = {}
     for l in lessons:
-        names.update(_lesson_names(l))
-    return sorted(names, key=str.casefold)
+        for name in _lesson_names(l):
+            key = _person_match_key(name)
+            current = by_key.get(key)
+            if current is None or (strip_academic_title(current) != current and strip_academic_title(name) == name):
+                by_key[key] = name
+    return sorted(by_key.values(), key=str.casefold)
 
 
 def _build_report_context(import_id: str, hide_accompanist: bool = False, person: str = "") -> dict | None:
