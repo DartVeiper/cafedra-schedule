@@ -42,13 +42,24 @@ merge в начале работы) — объясняй просто, не сы
   `tests/test_pipeline_errors.py::test_corrupt_legacy_doc_is_skipped_not_crashed`
   — в этой линукс-песочнице нет Word/LibreOffice для конвертации `.doc`.
   На Windows у методиста должен проходить. Не пытайся его "чинить".
-- **Релиз** (`APP_VERSION` в `backend/app/version.py`, сборка `.exe` через
-  `build_exe.bat`, публикация GitHub Release с тегом `vX.Y.Z` и
-  прикреплённым `.exe`) — ВСЕГДА делает сам пользователь на своей Windows-
-  машине. У Claude здесь нет ни Windows (PyInstaller не кросс-компилирует),
-  ни инструмента для создания GitHub Release. Можно (и нужно) поднять
-  `APP_VERSION` по его просьбе и запушить это одной строкой — саму
-  сборку и публикацию не делать, а объяснять шаги.
+- **Релиз** (`APP_VERSION`, запись в `app/changelog.py`, сборка `.exe`, GitHub Release
+  `vX.Y.Z` с прикреплённым `.exe`) — делать ТОЛЬКО по явной просьбе пользователя
+  («выпускай»). Если сессия идёт на его Windows-машине (`.venv\\Scripts` есть,
+  `gh auth status` — залогинен как DartVeiper), Claude может сделать это сам, так
+  было с v0.3.0: (1) тесты, включая `test_self_update_e2e.py`; (2) поднять версию +
+  changelog; (3) коммит и `git push origin main`; (4) чистая сборка той же командой, что
+  в `build_exe.bat` (сам bat заканчивается `pause` — запускать PyInstaller напрямую:
+  `python -m PyInstaller --noconfirm --name CafedraSchedule --onefile
+  --add-data "app/templates;app/templates" --add-data "app/static;app/static" desktop_app.py`);
+  (5) запуск собранного .exe в песочнице (`LOCALAPPDATA` во временную папку, чтобы не
+  трогать данные пользователя; `BROWSER="cmd /c exit"`, чтобы не открывался браузер) и
+  прогон по реальным файлам; (6) `gh release create vX.Y.Z backend/dist/CafedraSchedule.exe
+  --target main --title vX.Y.Z --notes-file ...` — текст в стиле прошлых релизов («Что
+  нового с vA:», пункты, «Если у вас уже установлена версия 0.1.5+ — обновитесь из
+  приложения»); (7) проверка: скачать ассет по настоящей ссылке и сверить sha256 и размер,
+  убедиться, что `update_check` из старой версии видит релиз. Без прямой просьбы —
+  только поднять `APP_VERSION` и запушить, сборку и публикацию объяснить шагами.
+  Не оставлять фоновых процессов/окон после тестов (проверить список процессов).
 
 ## Технические детали, которые легко забыть
 
