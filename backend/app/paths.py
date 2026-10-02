@@ -79,3 +79,10 @@ def cabinets_config_path() -> str:
     конкретной проверке расписания и должен пережить очистку/удаление data/
     (историю проверок), в отличие от самих проверок."""
     return os.path.join(_base_dir(), "config", "cabinets.json")
+
+
+def dismissed_conflicts_path() -> str:
+    """Накладки, которые методист пометил «это не накладка» (app/dismissed.py).
+    Как и реестр кабинетов — в config/, а не в data/: пометки привязаны не к
+    одной проверке, а к самим занятиям, и должны пережить удаление проверок."""
+    return os.path.join(_base_dir(), "config", "dismissed_conflicts.json")

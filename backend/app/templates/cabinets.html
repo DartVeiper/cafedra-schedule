@@ -1,13 +1,7 @@
-<!doctype html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<title>Кабинеты</title>
-<link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<div class="page">
-  <p><a href="/report/{{ import_id }}">&larr; Назад к отчёту</a></p>
+{% extends "base.html" %}
+{% set nav = 'cabinets' %}
+{% block title %}Кабинеты · Проверка расписания{% endblock %}
+{% block content %}
   <h1>Кабинеты</h1>
   <p class="lead">
     Список кабинетов кафедры — общий, не привязан к этой конкретной проверке
@@ -20,6 +14,7 @@
     {% for room in rooms %}
     <li>
       <a href="/report/{{ import_id }}/cabinets/{{ room|urlencode }}">{{ room }}</a>
+      {% if irregular_by_room.get(room) %}<span class="room-warn" title="Занятия в нестандартное время — возможно, опечатка во времени в файле">⚠ время: {{ irregular_by_room[room] }}</span>{% endif %}
       <form method="post" action="/report/{{ import_id }}/cabinets/remove" class="delete-import-form"
             onsubmit="return confirm('Убрать кабинет «{{ room }}» из списка кафедры?');">
         <input type="hidden" name="room" value="{{ room }}">
@@ -51,6 +46,4 @@
     {% endfor %}
   </ul>
   {% endif %}
-</div>
-</body>
-</html>
+{% endblock %}

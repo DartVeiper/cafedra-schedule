@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 
+from app import timegrid
 from app.conflicts import find_conflicts
 from app.models import INDIVIDUAL_LESSON_MINUTES, ConflictType, Lesson, LessonType
 
@@ -91,14 +92,28 @@ def _overlaps(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
     return a_start < b_end and b_start < a_end
 
 
-def build_room_schedule(lessons: list[Lesson], room: str) -> dict[int, list[dict]]:
+def build_room_schedule(
+    lessons: list[Lesson], room: str, special_slots: list[dict] | None = None
+) -> dict[int, list[dict]]:
     """{день_недели: [{"start": "10:15", "occupied_by": Lesson|None,
-    "conflict_with": Lesson|None}, ...]}, только для дней, где вообще есть
-    индивидуальные занятия у кафедры. "conflict_with" заполнен, если в этом
-    слоте кабинет реально занят дважды (переиспользуем find_conflicts —
-    ту же логику, что и в основном отчёте) — для подсветки красным и
-    подсказки при наведении."""
+    "conflict_with": Lesson|None, "irregular": bool}, ...]}, только для дней,
+    где вообще есть индивидуальные занятия у кафедры.
+
+    Слоты дня — сетка времени ЭТОГО дня (timegrid.py: она разная по дням).
+    Занятия этого кабинета в нестандартное время (не из сетки дня) вынесены в
+    конец дня отдельными слотами с "irregular": True — так видно, что время
+    «кривое», и оно не прячется внутри чужого слота. "conflict_with" заполнен,
+    если в этом слоте кабинет реально занят дважды (переиспользуем
+    find_conflicts — ту же логику, что и в основном отчёте).
+
+    special_slots — служебные слоты групповых файлов (кураторский час): они
+    встают в сетку дня на своё время отдельной серой ячейкой, поэтому после
+    них время «сдвинуто» не выглядит ошибкой, а строки дней остаются
+    сопоставимыми по номеру занятия."""
+    grids = timegrid.build_day_grids(lessons)
     room_lessons = [l for l in lessons if l.room_normalized == room]
+    irregular_lessons = [l for l in room_lessons if timegrid.is_irregular(l, grids)]
+    regular_room_lessons = [l for l in room_lessons if not any(l is i for i in irregular_lessons)]
 
     # ROOM_DOUBLE_BOOKED группируется в conflicts.py по room_normalized, так что
     # если lesson_a в этом кабинете — lesson_b тоже в нём же.
@@ -107,51 +122,97 @@ def build_room_schedule(lessons: list[Lesson], room: str) -> dict[int, list[dict
         if c.type == ConflictType.ROOM_DOUBLE_BOOKED and c.lesson_a.room_normalized == room
     ]
 
-    slot_starts_by_day: dict[int, set[int]] = {}
-    for l in lessons:
-        if l.lesson_type == LessonType.INDIVIDUAL:
-            slot_starts_by_day.setdefault(l.day_of_week, set()).add(l.start_minutes)
+    def slot_for(day: int, start: int, pool: list[Lesson], irregular: bool) -> dict:
+        end = start + INDIVIDUAL_LESSON_MINUTES
+        occupant = None
+        conflict_with = None
+        for c in room_conflicts:
+            if c.day_of_week != day:
+                continue
+            overlap_start = max(c.lesson_a.start_minutes, c.lesson_b.start_minutes)
+            overlap_end = min(c.lesson_a.end_minutes, c.lesson_b.end_minutes)
+            if _overlaps(start, end, overlap_start, overlap_end):
+                occupant, conflict_with = c.lesson_a, c.lesson_b
+                break
+        if occupant is None:
+            occupant = next(
+                (l for l in pool if l.day_of_week == day and _overlaps(start, end, l.start_minutes, l.end_minutes)),
+                None,
+            )
+        return {
+            "start": timegrid.fmt_minutes(start),
+            "occupied_by": occupant,
+            "conflict_with": conflict_with,
+            "irregular": irregular,
+            "special": None,
+        }
 
     schedule: dict[int, list[dict]] = {}
-    for day, starts in slot_starts_by_day.items():
+    for day, grid in grids.items():
+        starts = list(grid.slots)
+        specials = {}
+        for sp in special_slots or []:
+            m = _to_minutes(sp["start"])
+            if sp["day"] == day and m not in starts:
+                specials[m] = sp["subject"].capitalize()
+        starts = sorted(starts + list(specials))
         day_slots = []
-        for start in sorted(starts):
-            end = start + INDIVIDUAL_LESSON_MINUTES
-            occupant = None
-            conflict_with = None
-            for c in room_conflicts:
-                if c.day_of_week != day:
-                    continue
-                overlap_start = max(c.lesson_a.start_minutes, c.lesson_b.start_minutes)
-                overlap_end = min(c.lesson_a.end_minutes, c.lesson_b.end_minutes)
-                if _overlaps(start, end, overlap_start, overlap_end):
-                    occupant, conflict_with = c.lesson_a, c.lesson_b
-                    break
-            if occupant is None:
-                occupant = next(
-                    (
-                        l for l in room_lessons
-                        if l.day_of_week == day and _overlaps(start, end, l.start_minutes, l.end_minutes)
-                    ),
-                    None,
-                )
-            day_slots.append({
-                "start": f"{start // 60:02d}:{start % 60:02d}",
-                "occupied_by": occupant,
-                "conflict_with": conflict_with,
-            })
+        for start in starts:
+            if start in specials:
+                slot = slot_for(day, start, [], False)
+                slot["special"] = specials[start]
+                day_slots.append(slot)
+            else:
+                day_slots.append(slot_for(day, start, regular_room_lessons, False))
+        extra_starts = sorted({l.start_minutes for l in irregular_lessons if l.day_of_week == day})
+        day_slots += [
+            slot_for(day, start, [l for l in irregular_lessons if l.start_minutes == start], True)
+            for start in extra_starts
+        ]
         schedule[day] = day_slots
     return schedule
 
 
-def merge_time_axis(schedule: dict[int, list[dict]]) -> list[str]:
-    """Объединённый по всем дням список времён слотов — для отрисовки единой
-    сетки (дни — столбцы, время — строки), как в календаре."""
-    times = {slot["start"] for day_slots in schedule.values() for slot in day_slots}
-    return sorted(times)
+def grid_rows(schedule: dict[int, list[dict]], days: list[int]) -> list[list[dict | None]]:
+    """Строки таблицы «n-е занятие дня»: у каждого дня своя сетка времени, поэтому
+    сопоставляем дни не по часам, а по порядковому номеру слота (в каждом дне
+    слот №1 — первое занятие, и т.д.; послеобеденные слоты тоже совпадают по
+    номеру). Время слота подписано в самой ячейке. Если у дня слотов меньше —
+    в ячейке None."""
+    height = max((len(schedule.get(d, [])) for d in days), default=0)
+    return [
+        [schedule[d][i] if i < len(schedule.get(d, [])) else None for d in days]
+        for i in range(height)
+    ]
 
 
-def index_by_time(schedule: dict[int, list[dict]]) -> dict[int, dict[str, dict]]:
-    """{день: {"10:15": slot, ...}} — для поиска слота по (день, время) при
-    отрисовке единой сетки."""
-    return {day: {slot["start"]: slot for slot in day_slots} for day, day_slots in schedule.items()}
+def irregular_counts_by_room(lessons: list[Lesson]) -> dict[str, int]:
+    """{кабинет: сколько занятий в нестандартное время} — для списка кабинетов."""
+    counts: dict[str, int] = {}
+    for item in timegrid.find_irregular_times(lessons):
+        room = item.lesson.room_normalized
+        if room:
+            counts[room] = counts.get(room, 0) + 1
+    return counts
+
+
+LUNCH_GAP_MINUTES = 60  # обычный шаг сетки 50–55 мин; пауза длиннее — «большой перерыв» (обед)
+
+
+def break_rows(schedule: dict[int, list[dict]], days: list[int]) -> set[int]:
+    """Номера строк grid_rows, перед которыми у большинства дней большой
+    перерыв (обед) — таблица рисует над ними жирную линию, чтобы сетка не
+    выглядела «съехавшей»: до обеда и после него времена идут своими рядами."""
+    votes: dict[int, int] = {}
+    for d in days:
+        slots = [s for s in schedule.get(d, []) if not s["irregular"]]
+        for i in range(1, len(slots)):
+            gap = _to_minutes(slots[i]["start"]) - _to_minutes(slots[i - 1]["start"])
+            if gap > LUNCH_GAP_MINUTES:
+                votes[i] = votes.get(i, 0) + 1
+    return {i for i, n in votes.items() if n * 2 > len(days)}
+
+
+def _to_minutes(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)

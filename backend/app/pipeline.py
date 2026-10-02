@@ -55,8 +55,11 @@ def load_individual_lessons(individual_dir: str, known_groups: set[str] | None =
 
 
 def load_group_lessons(
-    group_dir: str, group_docx_cache_dir: str
+    group_dir: str, group_docx_cache_dir: str, special_slots_out: list | None = None
 ) -> tuple[list[Lesson], list[ParseWarning], list[str]]:
+    """special_slots_out — необязательный список, куда добавляются служебные
+    слоты групповых файлов (кураторский час и т.п.): словари
+    {"day": 0, "start": "14:25", "subject": "КУРАТОРСКИЙ ЧАС"}, без повторов."""
     os.makedirs(group_docx_cache_dir, exist_ok=True)
     lessons: list[Lesson] = []
     warnings: list[ParseWarning] = []
@@ -74,6 +77,13 @@ def load_group_lessons(
             continue
         lessons.extend(result.lessons)
         warnings.extend(result.warnings)
+        if special_slots_out is not None:
+            for day, start, subject in result.special_event_slots:
+                item = {"day": day, "start": start.strftime("%H:%M"), "subject": subject}
+                if item not in special_slots_out:
+                    special_slots_out.append(item)
+    if special_slots_out is not None:
+        special_slots_out.sort(key=lambda s: (s["day"], s["start"], s["subject"]))
     return lessons, warnings, failed_files
 
 

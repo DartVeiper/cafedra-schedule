@@ -6,23 +6,29 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import uuid
 from datetime import datetime
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app import cabinets as cabinets_module
 from app import db, self_update
-from app.conflicts import find_conflicts
+from app import dismissed as dismissed_module
+from app import timegrid
+from app.conflicts import conflict_key, find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
 from app.parsers.common import strip_academic_title
-from app.paths import app_package_dir, cabinets_config_path, migrate_legacy_storage, runtime_data_dir
+from app.paths import app_package_dir, cabinets_config_path, dismissed_conflicts_path, migrate_legacy_storage, runtime_data_dir
 from app.pipeline import known_groups_from_filenames, load_group_lessons, load_individual_lessons
-from app.update_check import check_for_update
+from app import changelog
+from app.mdlite import render_markdown_lite
+from app.update_check import cached_update, check_for_update
 from app.version import APP_VERSION
 from app.zip_utils import extract_zip
 
@@ -32,6 +38,7 @@ DATA_DIR = runtime_data_dir()
 UPLOADS_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "db", "cafedra.sqlite3")
 CABINETS_PATH = cabinets_config_path()
+DISMISSED_PATH = dismissed_conflicts_path()
 
 INDIVIDUAL_EXTS = {".xls", ".xlsx"}
 GROUP_EXTS = {".doc", ".docx"}
@@ -71,6 +78,7 @@ CONFLICT_LABELS = {
     ConflictType.ROOM_DOUBLE_BOOKED: "Аудитория занята дважды",
     ConflictType.STUDENT_DOUBLE_BOOKED: "Студент на двух индивидуальных одновременно",
     ConflictType.STUDENT_VS_GROUP: "Студент: индивидуальное пересекается с групповым",
+    ConflictType.ACCOMPANIST_PAIRING: "Проверьте концертмейстера (не накладки)",
 }
 
 
@@ -120,7 +128,7 @@ def apply_update():
             status_code=400,
         )
     try:
-        self_update.start_update(info["download_url"])
+        self_update.start_update(info["download_url"], expected_size=info.get("size"))
     except Exception as e:
         return HTMLResponse(
             f"<p>Не удалось скачать обновление: {type(e).__name__}: {e}. "
@@ -196,8 +204,11 @@ async def do_import(request: Request, files: list[UploadFile] = File(...)):
         individual_report = load_individual_lessons(individual_dir, known_groups=known_groups)
 
     group_lessons, group_warnings, group_failed_files = [], [], []
+    special_slots: list[dict] = []
     if os.listdir(group_dir):
-        group_lessons, group_warnings, group_failed_files = load_group_lessons(group_dir, group_docx_dir)
+        group_lessons, group_warnings, group_failed_files = load_group_lessons(
+            group_dir, group_docx_dir, special_slots_out=special_slots
+        )
 
     all_lessons = list(individual_report.lessons if individual_report else []) + group_lessons
 
@@ -212,6 +223,7 @@ async def do_import(request: Request, files: list[UploadFile] = File(...)):
         "merge_notes": individual_report.merge_notes if individual_report else [],
         "skipped_sheet_notes": individual_report.skipped_sheet_notes if individual_report else [],
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "special_slots": special_slots,  # кураторский час и т.п. — для подписей в сетке кабинета
         "individual_files": sorted(os.listdir(individual_dir)),
         "group_files": sorted(os.listdir(group_dir)),
     }
@@ -266,6 +278,7 @@ def cabinets_page(request: Request, import_id: str):
         "import_id": import_id,
         "rooms": registered,
         "suggested_rooms": suggested,
+        "irregular_by_room": cabinets_module.irregular_counts_by_room(lessons),
     })
 
 
@@ -287,17 +300,23 @@ def cabinets_remove(import_id: str, room: str = Form(...)):
 
 @app.get("/report/{import_id}/cabinets/{room}", response_class=HTMLResponse)
 def cabinet_schedule(request: Request, import_id: str, room: str):
-    lessons = _load_lessons_or_none(import_id)
+    lessons, notes = _load_import(import_id)
     if lessons is None:
         return HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
 
-    schedule = cabinets_module.build_room_schedule(lessons, room)
+    special_slots = (notes or {}).get("special_slots", [])
+    schedule = cabinets_module.build_room_schedule(lessons, room, special_slots)
     return templates.TemplateResponse(request, "cabinet_schedule.html", {
         "import_id": import_id,
         "room": room,
-        "time_axis": cabinets_module.merge_time_axis(schedule),
-        "schedule_by_time": cabinets_module.index_by_time(schedule),
+        "grid_rows": cabinets_module.grid_rows(schedule, sorted(schedule.keys())),
+        "break_rows": cabinets_module.break_rows(schedule, sorted(schedule.keys())),
+        "day_notes": timegrid.day_notes(timegrid.build_day_grids(lessons), special_slots),
         "days_present": sorted(schedule.keys()),
+        "irregular_here": [
+            timegrid.describe(i) for i in timegrid.find_irregular_times(lessons)
+            if i.lesson.room_normalized == room
+        ],
         "day_names": DAY_NAMES_RU,
     })
 
@@ -350,72 +369,256 @@ def _collect_all_names(lessons: list) -> list[str]:
     return sorted(by_key.values(), key=str.casefold)
 
 
-def _build_report_context(import_id: str, hide_accompanist: bool = False, person: str = "") -> dict | None:
+DAY_SHORT_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб"]
+
+
+
+def _parse_day(day: str) -> int | None:
+    try:
+        d = int(day)
+    except (TypeError, ValueError):
+        return None
+    return d if 0 <= d < len(DAY_NAMES_RU) else None
+
+
+def _conflict_in_room(c, room: str) -> bool:
+    return room in (c.lesson_a.room_normalized, c.lesson_b.room_normalized)
+
+
+def _room_label(key: str) -> str:
+    """'421' -> '421'; '1:405' (чужой корпус) -> 'корп. 1, ауд. 405'."""
+    building, sep, num = key.partition(":")
+    return f"корп. {building}, ауд. {num}" if sep else key
+
+
+def _fmt_range(l) -> str:
+    end = l.end_minutes
+    return f"{l.start_time.strftime('%H:%M')}–{end // 60:02d}:{end % 60:02d}"
+
+
+def _overlap_range(c) -> str:
+    """Время, когда два занятия реально накладываются: 'с 14:35 до 15:20'."""
+    start = max(c.lesson_a.start_minutes, c.lesson_b.start_minutes)
+    end = min(c.lesson_a.end_minutes, c.lesson_b.end_minutes)
+    return f"{start // 60:02d}:{start % 60:02d}–{end // 60:02d}:{end % 60:02d}"
+
+
+# Браузер кэширует style.css; после обновления программы (и правок стилей) без
+# метки версии у методиста могла бы остаться старая вёрстка.
+templates.env.globals["app_version"] = APP_VERSION
+templates.env.globals["cached_update"] = cached_update
+templates.env.globals["changelog_entries"] = changelog.entries_for_display
+templates.env.filters["md"] = render_markdown_lite
+templates.env.globals["css_stamp"] = int(os.path.getmtime(os.path.join(APP_DIR, "static", "style.css")))
+templates.env.globals["overlap_range"] = _overlap_range
+templates.env.globals["conflict_key"] = conflict_key
+templates.env.globals["fmt_range"] = _fmt_range
+templates.env.globals["day_short"] = DAY_SHORT_RU
+
+
+class _Filters:
+    """Параметры отчёта из адресной строки; одни и те же для страницы,
+    выгрузок в Excel/Word и JSON-API — чтобы файл содержал ровно то, что
+    методист видит на экране."""
+
+    def __init__(self, hide_accompanist: bool = False, person: str = "", day: str = "",
+                 room: str = "", show_dismissed: bool = False):
+        self.hide_accompanist = hide_accompanist
+        self.person = person.strip()
+        self.day = _parse_day(day)
+        self.room = room.strip()
+        self.show_dismissed = show_dismissed
+
+    def as_params(self, **override) -> dict:
+        p = {
+            "hide_accompanist": "true" if self.hide_accompanist else "",
+            "person": self.person,
+            "day": "" if self.day is None else str(self.day),
+            "room": self.room,
+            "show_dismissed": "true" if self.show_dismissed else "",
+        }
+        p.update(override)
+        return {k: v for k, v in p.items() if v}
+
+
+class _Selection:
+    def __init__(self, conflicts: list, pairings: list, dismissed: list, day_counts: dict,
+                 day_options: list, room_options: list, dismissed_total: int):
+        self.conflicts = conflicts          # активные (не помеченные «не накладка»), без пар с концертмейстером
+        self.pairings = pairings            # пары «преподаватель + концертмейстер» для сверки (не накладки)
+        self.dismissed = dismissed          # помеченные, но подходящие под фильтры
+        self.day_counts = day_counts        # {день: число активных} при остальных фильтрах
+        self.day_options = day_options
+        self.room_options = room_options
+        self.dismissed_total = dismissed_total
+
+
+def _room_sort_key(r: str):
+    return (not r.isdigit(), int(r) if r.isdigit() else 0, r)
+
+
+def _select_conflicts(lessons: list, f: _Filters) -> _Selection:
+    all_conflicts = find_conflicts(lessons)
+    dismissed_keys = dismissed_module.load_dismissed(DISMISSED_PATH)
+
+    base = all_conflicts
+    if f.hide_accompanist:
+        base = [c for c in base if not _involves_accompanist(c)]
+    base = _filter_conflicts_by_person(base, f.person)
+    if f.room:
+        base = [c for c in base if _conflict_in_room(c, f.room)]
+
+    def is_dismissed(c) -> bool:
+        return conflict_key(c) in dismissed_keys
+
+    day_counts: dict[int, int] = {}
+    for c in base:
+        if c.type != ConflictType.ACCOMPANIST_PAIRING and not is_dismissed(c):
+            day_counts[c.day_of_week] = day_counts.get(c.day_of_week, 0) + 1
+
+    picked = [c for c in base if f.day is None or c.day_of_week == f.day]
+    is_pairing = lambda c: c.type == ConflictType.ACCOMPANIST_PAIRING
+    active = [c for c in picked if not is_pairing(c) and not is_dismissed(c)]
+    pairings = [c for c in picked if is_pairing(c) and not is_dismissed(c)]
+    dismissed = [c for c in picked if is_dismissed(c)]
+
+    rooms = {r for c in all_conflicts for r in (c.lesson_a.room_normalized, c.lesson_b.room_normalized) if r}
+    if f.room:
+        rooms.add(f.room)
+    room_options = [(r, _room_label(r)) for r in sorted(rooms, key=_room_sort_key)]
+
+    return _Selection(
+        active, pairings, dismissed, day_counts, sorted({c.day_of_week for c in all_conflicts}),
+        room_options, sum(1 for c in all_conflicts if is_dismissed(c)),
+    )
+
+
+def _load_import(import_id: str):
     conn = db.get_connection(DB_PATH)
     try:
         if not db.import_exists(conn, import_id):
-            return None
-        lessons = db.load_lessons(conn, import_id)
-        notes = db.load_notes(conn, import_id)
+            return None, None
+        return db.load_lessons(conn, import_id), db.load_notes(conn, import_id)
     finally:
         conn.close()
 
-    conflicts = find_conflicts(lessons)
-    if hide_accompanist:
-        conflicts = [c for c in conflicts if not _involves_accompanist(c)]
-    person = person.strip()
-    conflicts = _filter_conflicts_by_person(conflicts, person)
 
-    by_type: dict[str, list] = {}
-    for c in conflicts:
-        by_type.setdefault(c.type.value, []).append(c)
+def _build_report_context(import_id: str, f: _Filters | None = None) -> dict | None:
+    f = f or _Filters()
+    lessons, notes = _load_import(import_id)
+    if lessons is None:
+        return None
+    sel = _select_conflicts(lessons, f)
 
-    certain_count = sum(1 for c in conflicts if c.is_certain)
-    review_count = sum(1 for c in conflicts if not c.is_certain)
+    def grouped(conflicts: list) -> list[dict]:
+        by_type: dict[str, list] = {}
+        for c in conflicts:
+            by_type.setdefault(c.type.value, []).append(c)
+        return [
+            {"type": ctype, "label": CONFLICT_LABELS[ctype], "conflicts": by_type.get(ctype.value, [])}
+            for ctype in ConflictType
+        ]
 
     individual_count = sum(1 for l in lessons if l.lesson_type.value == "individual")
-    group_count = len(lessons) - individual_count
+    irregular_times = [
+        {
+            "who": i.lesson.teacher_name or i.lesson.accompanist_name or "—",
+            "student": i.lesson.student_name,
+            "room": i.lesson.room_raw,
+            "text": timegrid.describe(i),
+            "source": i.lesson.source.label(),
+        }
+        for i in timegrid.find_irregular_times(lessons)
+    ]
+    lost_notes = [n for n in notes.get("dropped_sheet_notes", []) if "ВНИМАНИЕ" in n]
 
+    def link(**override) -> str:
+        params = f.as_params(**override)
+        return f"/report/{import_id}" + (f"?{urlencode(params)}" if params else "")
+
+    export_params = f.as_params(show_dismissed="")
     return {
         "import_id": import_id,
         "notes": notes,
+        "lost_notes": lost_notes,
+        "irregular_times": irregular_times,
         "lesson_count": len(lessons),
         "individual_count": individual_count,
-        "group_count": group_count,
-        "certain_count": certain_count,
-        "review_count": review_count,
-        "hide_accompanist": hide_accompanist,
-        "person": person,
+        "group_count": len(lessons) - individual_count,
+        "certain_count": sum(1 for c in sel.conflicts if c.is_certain),
+        "review_count": sum(1 for c in sel.conflicts if not c.is_certain),
+        "dismissed_total": sel.dismissed_total,
+        "f": f,
+        "hide_accompanist": f.hide_accompanist,
+        "person": f.person,
+        "day": f.day,
+        "room": f.room,
+        "show_dismissed": f.show_dismissed,
         "all_names": _collect_all_names(lessons),
-        "conflict_groups": [
-            {"type": ctype, "label": CONFLICT_LABELS[ctype], "conflicts": by_type.get(ctype.value, [])}
-            for ctype in ConflictType
-        ],
+        "day_options": sel.day_options,
+        "day_counts": sel.day_counts,
+        "day_total": sum(sel.day_counts.values()),
+        "room_options": sel.room_options,
+        "conflict_groups": [g for g in grouped(sel.conflicts) if g["type"] != ConflictType.ACCOMPANIST_PAIRING],
+        "pairing_groups": [g for g in grouped(sel.pairings) if g["type"] == ConflictType.ACCOMPANIST_PAIRING],
+        "pairing_count": len(sel.pairings),
+        "pairing_review_count": sum(1 for c in sel.pairings if not c.is_certain),
+        "dismissed_groups": grouped(sel.dismissed),
+        "dismissed_shown": len(sel.dismissed),
         "day_names": DAY_NAMES_RU,
+        "qs": urlencode(f.as_params()),
+        "link": link,
+        "export_qs": f"?{urlencode(export_params)}" if export_params else "",
+        "has_filters": bool(f.hide_accompanist or f.person or f.day is not None or f.room),
     }
 
 
 @app.get("/report/{import_id}", response_class=HTMLResponse)
-def report(request: Request, import_id: str, hide_accompanist: bool = False, person: str = ""):
-    ctx = _build_report_context(import_id, hide_accompanist=hide_accompanist, person=person)
+def report(request: Request, import_id: str, hide_accompanist: bool = False, person: str = "",
+           day: str = "", room: str = "", show_dismissed: bool = False):
+    ctx = _build_report_context(import_id, _Filters(hide_accompanist, person, day, room, show_dismissed))
     if ctx is None:
         return HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
     return templates.TemplateResponse(request, "report.html", ctx)
 
 
+_KEY_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+def _back_to_report(import_id: str, qs: str) -> RedirectResponse:
+    return RedirectResponse(url=f"/report/{import_id}" + (f"?{qs}" if qs else ""), status_code=303)
+
+
+def _wants_json(request: Request) -> bool:
+    return request.headers.get("x-requested-with") == "fetch"
+
+
+@app.post("/report/{import_id}/dismiss")
+def dismiss_conflict(request: Request, import_id: str, key: str = Form(...), label: str = Form(""), qs: str = Form("")):
+    if _KEY_RE.match(key):
+        dismissed_module.dismiss(DISMISSED_PATH, key, label[:300])
+    if _wants_json(request):
+        return JSONResponse({"ok": True})
+    return _back_to_report(import_id, qs)
+
+
+@app.post("/report/{import_id}/restore")
+def restore_conflict(request: Request, import_id: str, key: str = Form(""), qs: str = Form("")):
+    if key == "all":
+        dismissed_module.restore_all(DISMISSED_PATH)
+    elif _KEY_RE.match(key):
+        dismissed_module.restore(DISMISSED_PATH, key)
+    if _wants_json(request):
+        return JSONResponse({"ok": True})
+    return _back_to_report(import_id, qs)
+
+
 @app.get("/api/report/{import_id}")
-def api_report(import_id: str, hide_accompanist: bool = False, person: str = ""):
-    conn = db.get_connection(DB_PATH)
-    try:
-        if not db.import_exists(conn, import_id):
-            return {"error": "import not found"}
-        lessons = db.load_lessons(conn, import_id)
-    finally:
-        conn.close()
-    conflicts = find_conflicts(lessons)
-    if hide_accompanist:
-        conflicts = [c for c in conflicts if not _involves_accompanist(c)]
-    conflicts = _filter_conflicts_by_person(conflicts, person)
+def api_report(import_id: str, hide_accompanist: bool = False, person: str = "", day: str = "", room: str = ""):
+    lessons, _ = _load_import(import_id)
+    if lessons is None:
+        return {"error": "import not found"}
+    sel = _select_conflicts(lessons, _Filters(hide_accompanist, person, day, room))
 
     def lesson_json(l):
         return {
@@ -434,27 +637,20 @@ def api_report(import_id: str, hide_accompanist: bool = False, person: str = "")
                 "type": c.type.value, "day_of_week": c.day_of_week, "is_certain": c.is_certain,
                 "note": c.note, "a": lesson_json(c.lesson_a), "b": lesson_json(c.lesson_b),
             }
-            for c in conflicts
+            for c in sel.conflicts
         ],
     }
 
 
 @app.get("/report/{import_id}/export.xlsx")
-def export_xlsx(import_id: str, hide_accompanist: bool = False, person: str = ""):
+def export_xlsx(import_id: str, hide_accompanist: bool = False, person: str = "", day: str = "", room: str = ""):
     import openpyxl
     from openpyxl.utils import get_column_letter
 
-    conn = db.get_connection(DB_PATH)
-    try:
-        if not db.import_exists(conn, import_id):
-            return HTMLResponse("Импорт не найден", status_code=404)
-        lessons = db.load_lessons(conn, import_id)
-    finally:
-        conn.close()
-    conflicts = find_conflicts(lessons)
-    if hide_accompanist:
-        conflicts = [c for c in conflicts if not _involves_accompanist(c)]
-    conflicts = _filter_conflicts_by_person(conflicts, person)
+    lessons, _ = _load_import(import_id)
+    if lessons is None:
+        return HTMLResponse("Импорт не найден", status_code=404)
+    sel = _select_conflicts(lessons, _Filters(hide_accompanist, person, day, room))
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -464,24 +660,25 @@ def export_xlsx(import_id: str, hide_accompanist: bool = False, person: str = ""
         "A: время", "A: кто", "A: студент", "A: группа", "A: предмет", "A: аудитория", "A: источник",
         "B: время", "B: кто", "B: студент", "B: группа", "B: предмет", "B: аудитория", "B: источник",
     ]
-    ws.append(headers)
-    for c in conflicts:
-        a, b = c.lesson_a, c.lesson_b
 
-        def who(l):
-            return l.teacher_name or l.accompanist_name or ""
+    def who(l):
+        return l.teacher_name or l.accompanist_name or ""
 
-        def timespan(l):
-            end = l.start_minutes + l.duration_minutes
-            return f"{l.start_time.strftime('%H:%M')}-{end // 60:02d}:{end % 60:02d}"
+    def fill(sheet, conflicts):
+        sheet.append(headers)
+        for c in conflicts:
+            a, b = c.lesson_a, c.lesson_b
+            sheet.append([
+                CONFLICT_LABELS[c.type], "да" if not c.is_certain else "", DAY_NAMES_RU[c.day_of_week], c.note or "",
+                _fmt_range(a), who(a), a.student_name or "", a.group_raw or "", a.subject or "", a.room_raw or "", a.source.label(),
+                _fmt_range(b), who(b), b.student_name or "", b.group_raw or "", b.subject or "", b.room_raw or "", b.source.label(),
+            ])
+        for i, _ in enumerate(headers, start=1):
+            sheet.column_dimensions[get_column_letter(i)].width = 20
 
-        ws.append([
-            CONFLICT_LABELS[c.type], "да" if not c.is_certain else "", DAY_NAMES_RU[c.day_of_week], c.note or "",
-            timespan(a), who(a), a.student_name or "", a.group_raw or "", a.subject or "", a.room_raw or "", a.source.label(),
-            timespan(b), who(b), b.student_name or "", b.group_raw or "", b.subject or "", b.room_raw or "", b.source.label(),
-        ])
-    for i, _ in enumerate(headers, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = 20
+    fill(ws, sel.conflicts)
+    if sel.pairings:
+        fill(wb.create_sheet("Проверить концертмейстера"), sel.pairings)
 
     import io
     buf = io.BytesIO()
@@ -523,12 +720,16 @@ def _build_conflict_docx(ctx: dict):
     ]
     if ctx["person"]:
         summary_bits.append(f"Показаны только накладки: {ctx['person']}")
+    if ctx["day"] is not None:
+        summary_bits.append(f"День: {DAY_NAMES_RU[ctx['day']]}")
+    if ctx["room"]:
+        summary_bits.append(f"Кабинет: {_room_label(ctx['room'])}")
     if ctx["hide_accompanist"]:
         summary_bits.append("Накладки с участием концертмейстера скрыты")
     doc.add_paragraph(" · ".join(summary_bits))
 
-    if ctx["person"] and ctx["certain_count"] == 0 and ctx["review_count"] == 0:
-        doc.add_paragraph(f"У «{ctx['person']}» накладок не найдено — всё в порядке.")
+    if ctx["has_filters"] and ctx["certain_count"] == 0 and ctx["review_count"] == 0:
+        doc.add_paragraph("По выбранным условиям накладок не найдено — всё в порядке.")
 
     day_names = ctx["day_names"]
     for group in ctx["conflict_groups"]:
@@ -547,12 +748,31 @@ def _build_conflict_docx(ctx: dict):
             note = ("[Требует проверки] " if not c.is_certain else "") + (c.note or "")
             row[3].text = note.strip()
 
+    for group in ctx["pairing_groups"]:
+        if not group["conflicts"]:
+            continue
+        doc.add_heading(f"{group['label']} ({len(group['conflicts'])})", level=2)
+        doc.add_paragraph(
+            "Преподаватель и концертмейстер у одного студента в одном кабинете одновременно — "
+            "обычная практика, это не накладки. Сверьте, что концертмейстер назначен верно."
+        )
+        table = doc.add_table(rows=1, cols=4)
+        table.style = "Light Grid Accent 1"
+        hdr = table.rows[0].cells
+        hdr[0].text, hdr[1].text, hdr[2].text, hdr[3].text = "День", "Преподаватель", "Концертмейстер", "Примечание"
+        for c in group["conflicts"]:
+            row = table.add_row().cells
+            row[0].text = day_names[c.day_of_week]
+            row[1].text = _lesson_line(c.lesson_a)
+            row[2].text = _lesson_line(c.lesson_b)
+            row[3].text = ("[Требует проверки] " if not c.is_certain else "") + (c.note or "")
+
     return doc
 
 
 @app.get("/report/{import_id}/export.docx")
-def export_docx(import_id: str, hide_accompanist: bool = False, person: str = ""):
-    ctx = _build_report_context(import_id, hide_accompanist=hide_accompanist, person=person)
+def export_docx(import_id: str, hide_accompanist: bool = False, person: str = "", day: str = "", room: str = ""):
+    ctx = _build_report_context(import_id, _Filters(hide_accompanist, person, day, room))
     if ctx is None:
         return HTMLResponse("Импорт не найден", status_code=404)
 

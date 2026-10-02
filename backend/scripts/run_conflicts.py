@@ -25,6 +25,7 @@ CONFLICT_LABELS = {
     ConflictType.ROOM_DOUBLE_BOOKED: "Аудитория занята дважды",
     ConflictType.STUDENT_DOUBLE_BOOKED: "Студент на двух индивидуальных одновременно",
     ConflictType.STUDENT_VS_GROUP: "Студент: индивидуальное пересекается с групповым",
+    ConflictType.ACCOMPANIST_PAIRING: "Проверьте концертмейстера (не накладки)",
 }
 
 

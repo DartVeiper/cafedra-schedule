@@ -32,11 +32,19 @@ def _is_newer(remote: str, local: str) -> bool:
     return _parse_version(remote) > _parse_version(local)
 
 
+def cached_update() -> dict | None:
+    """То, что уже известно о новой версии, БЕЗ обращения в сеть — для шапки
+    страниц (кнопка «Что нового»): сеть дёргает только главная страница."""
+    return _cache["result"]
+
+
 def check_for_update(force: bool = False) -> dict | None:
     """{'version': 'v0.2.0', 'url': 'https://github.com/.../releases/tag/v0.2.0',
-    'download_url': 'https://github.com/.../CafedraSchedule.exe'} если есть более
-    новый релиз, иначе None. 'download_url' — None, если к релизу не приложен
-    .exe (например, релиз только с исходниками). Результат кэшируется на час."""
+    'download_url': 'https://github.com/.../CafedraSchedule.exe', 'size': 32418955,
+    'notes': 'Что нового: ...'} если есть более новый релиз, иначе None.
+    'download_url' — None, если к релизу не приложен .exe (например, релиз только
+    с исходниками). 'notes' — текст релиза (его пишет автор на GitHub), 'size' —
+    размер .exe для проверки целостности скачивания. Кэшируется на час."""
     now = time.time()
     if not force and now - _cache["checked_at"] < _CACHE_TTL_SECONDS:
         return _cache["result"]
@@ -67,9 +75,14 @@ def _fetch_latest_release() -> dict | None:
         return None
 
     download_url = None
+    size = None
     for asset in data.get("assets") or []:
         if str(asset.get("name", "")).lower().endswith(".exe"):
             download_url = asset.get("browser_download_url")
+            size = asset.get("size") if isinstance(asset.get("size"), int) else None
             break
 
-    return {"version": tag, "url": html_url, "download_url": download_url}
+    return {
+        "version": tag, "url": html_url, "download_url": download_url,
+        "size": size, "notes": data.get("body") or "",
+    }

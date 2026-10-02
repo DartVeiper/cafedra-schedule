@@ -9,6 +9,14 @@ from app.conflicts import find_conflicts
 from app.models import ConflictType, LessonType
 
 
+def _real(conflicts):
+    return [c for c in conflicts if c.type != ConflictType.ACCOMPANIST_PAIRING]
+
+
+def _pairings(conflicts):
+    return [c for c in conflicts if c.type == ConflictType.ACCOMPANIST_PAIRING]
+
+
 def test_teacher_plus_accompanist_same_room_is_not_a_conflict(make_lesson):
     """Ананьев (преп.) + Филатова (конц.) у одной студентки, одна аудитория,
     одно время — обычный совместный урок (аккомпанемент), не накладка."""
@@ -19,7 +27,9 @@ def test_teacher_plus_accompanist_same_room_is_not_a_conflict(make_lesson):
 
     conflicts = find_conflicts([a, b])
 
-    assert conflicts == []
+    # не накладка, но и не молчим: пара уходит в отдельный список "проверьте концертмейстера"
+    assert _real(conflicts) == []
+    assert len(_pairings(conflicts)) == 1
 
 
 def test_teacher_plus_accompanist_different_room_flagged_for_review(make_lesson):
@@ -67,7 +77,8 @@ def test_student_name_typo_across_files_still_matches(make_lesson):
     conflicts = find_conflicts([a, b])
 
     # Совместное занятие преп.+конц. у того же (с опечаткой) студента — не накладка.
-    assert conflicts == []
+    assert _real(conflicts) == []
+    assert len(_pairings(conflicts)) == 1
 
 
 def test_different_students_same_surname_are_not_merged(make_lesson):
@@ -149,3 +160,53 @@ def test_conflicts_are_sorted_by_day_and_time(make_lesson):
     conflicts = find_conflicts([late, late2, early, early2])
 
     assert [c.day_of_week for c in conflicts] == [1, 4]
+
+
+def test_typo_in_student_surname_still_recognised_as_joint_lesson(make_lesson):
+    """Реальный случай: 'Становакина Юлия' / 'Становкина Юлия' (Байбикова + Смирнова,
+    вторник 18:15, ауд. 421) — одно и то же совместное занятие, а не накладка по аудитории."""
+    a = make_lesson(teacher="Байбикова Г.В.", student="Становакина Юлия", room="421",
+                    start="18:15", subject="концертмейстерское искусство")
+    b = make_lesson(teacher=None, accompanist="Смирнова А.А.", student="Становкина Юлия", room="421",
+                    start="18:15", subject="концертмейстерское искусство")
+
+    conflicts = find_conflicts([a, b])
+
+    assert _real(conflicts) == []
+    pairing = _pairings(conflicts)
+    assert len(pairing) == 1
+    assert pairing[0].is_certain  # предметы совпали — обычная пара, без тревожной пометки
+    assert pairing[0].lesson_a.teacher_name == "Байбикова Г.В."  # A — всегда преподаватель
+
+
+def test_similar_surnames_of_siblings_are_not_merged(make_lesson):
+    """'Иванов Пётр' и 'Иванова Пётр...' — фамилии, где одна начало другой, это разные люди."""
+    a = make_lesson(teacher="Ананьев А.А.", student="Иванов Анна", room="418", start="08:30")
+    b = make_lesson(teacher=None, accompanist="Филатова С.В.", student="Иванова Анна", room="418", start="08:30")
+
+    conflicts = find_conflicts([a, b])
+
+    assert _pairings(conflicts) == []
+
+
+def test_pairing_with_different_subjects_is_flagged_for_review(make_lesson):
+    a = make_lesson(teacher="Курганская О.А.", student="Чернова Анна", room="421", start="10:15",
+                    subject="основы импровизации и аранжировки")
+    b = make_lesson(teacher=None, accompanist="Смирнова А.А.", student="Чернова Анна", room="421",
+                    start="10:15", subject="концертмейстерский класс")
+
+    pairing = _pairings(find_conflicts([a, b]))[0]
+
+    assert not pairing.is_certain
+    assert "Предметы разные" in pairing.note
+
+
+def test_pairing_on_special_instrument_is_flagged_for_review(make_lesson):
+    a = make_lesson(teacher="Курганская О.А.", student="Чернова Анна", room="421", subject="специальный инструмент")
+    b = make_lesson(teacher=None, accompanist="Смирнова А.А.", student="Чернова Анна", room="421",
+                    subject="специальный инструмент")
+
+    pairing = _pairings(find_conflicts([a, b]))[0]
+
+    assert not pairing.is_certain
+    assert "специальному инструменту" in pairing.note

@@ -38,8 +38,9 @@ def test_finds_exe_asset_download_url(monkeypatch):
         "html_url": "https://github.com/x/y/releases/tag/v0.2.0",
         "assets": [
             {"name": "checksums.txt", "browser_download_url": "https://x/checksums.txt"},
-            {"name": "CafedraSchedule.exe", "browser_download_url": "https://x/CafedraSchedule.exe"},
+            {"name": "CafedraSchedule.exe", "browser_download_url": "https://x/CafedraSchedule.exe", "size": 123456},
         ],
+        "body": "Что нового:\n- кнопка",
     }))
 
     result = update_check.check_for_update(force=True)
@@ -48,7 +49,10 @@ def test_finds_exe_asset_download_url(monkeypatch):
         "version": "v0.2.0",
         "url": "https://github.com/x/y/releases/tag/v0.2.0",
         "download_url": "https://x/CafedraSchedule.exe",
+        "size": 123456,
+        "notes": "Что нового:\n- кнопка",
     }
+    assert update_check.cached_update() == result  # шапка страниц берёт это без сети
 
 
 def test_no_exe_asset_gives_none_download_url(monkeypatch):

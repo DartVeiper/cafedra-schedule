@@ -129,7 +129,7 @@ def test_docx_export_shows_all_clear_message_when_person_has_no_conflicts(tmp_pa
     conn.close()
     monkeypatch.setattr(main_module, "DB_PATH", str(db_path))
 
-    ctx = main_module._build_report_context("demo2", person="Петров П.П.")
+    ctx = main_module._build_report_context("demo2", main_module._Filters(person="Петров П.П."))
     doc = main_module._build_conflict_docx(ctx)
 
     paragraph_text = "\n".join(p.text for p in doc.paragraphs)

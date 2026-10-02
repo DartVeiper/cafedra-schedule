@@ -1,15 +1,10 @@
-<!doctype html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<title>Кабинет {{ room }}</title>
-<link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
+{% extends "base.html" %}
+{% set nav = 'cabinets' %}
+{% block title %}Кабинет {{ room }} · Проверка расписания{% endblock %}
 {% macro lesson_label(l) -%}
 {{ l.teacher_name or l.accompanist_name or l.subject or '—' }}{% if l.student_name %} · {{ l.student_name }}{% endif %}{% if l.group_raw %} · гр.{{ l.group_raw }}{% endif %}{% if (l.teacher_name or l.accompanist_name) and l.subject %} · {{ l.subject }}{% endif %}
 {%- endmacro %}
-<div class="page">
+{% block content %}
   <p><a href="/report/{{ import_id }}/cabinets">&larr; Все кабинеты</a></p>
   <h1>Кабинет {{ room }}</h1>
   <p class="lead">
@@ -21,45 +16,69 @@
     <span class="legend-item"><span class="legend-swatch cell-free"></span>свободно</span>
     <span class="legend-item"><span class="legend-swatch cell-occupied"></span>занято</span>
     <span class="legend-item"><span class="legend-swatch cell-conflict"></span>накладка</span>
-    <span class="legend-item"><span class="legend-swatch cell-none"></span>нет слота в этот день</span>
+    <span class="legend-item"><span class="legend-swatch cell-special"></span>кураторский час и т.п.</span>
+    <span class="legend-item"><span class="legend-swatch cell-irregular"></span>нестандартное время</span>
+    <span class="legend-item"><span class="legend-swatch cell-none"></span>в этот день занятий меньше</span>
   </div>
 
-  {% if not time_axis %}
+  {% if irregular_here %}
+  <div class="att att-warn" style="margin-bottom:14px">
+    <div class="att-list" style="padding-top:12px">
+      <b>⚠ В этом кабинете есть занятия в нестандартное время — возможно, опечатка в файле преподавателя:</b>
+      <ul style="margin:6px 0 0">{% for t in irregular_here %}<li>{{ t }}</li>{% endfor %}</ul>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not grid_rows %}
   <p>В этой проверке нет данных для сетки — не найдено индивидуальных занятий.</p>
   {% else %}
+  <p class="grid-explain">
+    У каждого дня своя сетка времени, поэтому строки — это порядковый номер занятия в дне
+    (№1 — первое, №7 — первое после обеда), а точное время написано в каждой ячейке.
+  </p>
+  <div class="grid-wrap">
   <table class="cabinet-grid">
     <thead>
       <tr>
-        <th></th>
-        {% for day in days_present %}<th>{{ day_names[day] }}</th>{% endfor %}
+        <th class="grid-num">№</th>
+        {% for day in days_present %}
+        <th>{{ day_names[day] }}{% if day_notes.get(day) %}<div class="day-note">{{ day_notes[day] }}</div>{% endif %}</th>
+        {% endfor %}
       </tr>
     </thead>
     <tbody>
-      {% for t in time_axis %}
-      <tr>
-        <td class="grid-time">{{ t }}</td>
-        {% for day in days_present %}
-          {% set slot = schedule_by_time.get(day, {}).get(t) %}
+      {% for row in grid_rows %}
+      <tr class="{{ 'row-break' if loop.index0 in break_rows else '' }}">
+        <td class="grid-num">{{ loop.index }}</td>
+        {% for slot in row %}
           {% if slot is none %}
           <td class="grid-cell cell-none">&nbsp;</td>
+          {% elif slot.special %}
+          <td class="grid-cell cell-special"><div class="slot-time">{{ slot.start }}</div>{{ slot.special }}</td>
           {% elif slot.conflict_with %}
           <td class="grid-cell cell-conflict">
+            <div class="slot-time">{{ slot.start }}</div>
             <b>⚠ Накладка</b><br>
             {{ lesson_label(slot.occupied_by) }}
             <br>&times;<br>
             {{ lesson_label(slot.conflict_with) }}
           </td>
+          {% elif slot.irregular %}
+          <td class="grid-cell cell-irregular">
+            <div class="slot-time">{{ slot.start }} <span class="irregular-tag">нестандартное время</span></div>
+            {{ lesson_label(slot.occupied_by) }}
+          </td>
           {% elif slot.occupied_by %}
-          <td class="grid-cell cell-occupied">{{ lesson_label(slot.occupied_by) }}</td>
+          <td class="grid-cell cell-occupied"><div class="slot-time">{{ slot.start }}</div>{{ lesson_label(slot.occupied_by) }}</td>
           {% else %}
-          <td class="grid-cell cell-free">&nbsp;</td>
+          <td class="grid-cell cell-free"><div class="slot-time">{{ slot.start }}</div></td>
           {% endif %}
         {% endfor %}
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% endif %}
-</div>
-</body>
-</html>
+{% endblock %}

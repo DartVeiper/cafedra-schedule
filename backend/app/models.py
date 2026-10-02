@@ -74,6 +74,10 @@ class ConflictType(str, Enum):
     ROOM_DOUBLE_BOOKED = "room_double_booked"  # аудитория занята дважды
     STUDENT_DOUBLE_BOOKED = "student_double_booked"  # студент на двух индивидуальных одновременно
     STUDENT_VS_GROUP = "student_vs_group"  # индивидуальное занятие студента пересекается с его групповым
+    # НЕ накладка: преподаватель и концертмейстер ведут одного студента в одном кабинете
+    # одновременно (обычная практика). Выносится в отдельный список "сверить концертмейстера":
+    # методист проверяет, тот ли концертмейстер и тот ли предмет.
+    ACCOMPANIST_PAIRING = "accompanist_pairing"
 
 
 @dataclass

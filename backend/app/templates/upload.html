@@ -1,46 +1,56 @@
-<!doctype html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<title>Проверка расписания — поиск накладок и сверка</title>
-<link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<div class="page">
-  {% if update_info %}
-  <div class="update-banner">
+{% extends "base.html" %}
+{% set nav = 'upload' %}
+{% block title %}Проверка расписания — поиск накладок и сверка{% endblock %}
+{% block page_class %}narrow{% endblock %}
+
+{% block content %}
+{% if update_info %}
+<div class="update-banner">
+  <div class="update-title">🎉 Доступна новая версия программы: <b>{{ update_info.version }}</b>
+    <span class="update-current">(сейчас установлена {{ app_version }})</span></div>
+  {% if update_info.notes %}
+  <div class="update-notes">{{ update_info.notes|md }}</div>
+  {% endif %}
+  <div class="update-actions">
     {% if update_info.download_url and can_self_update %}
-    <form action="/update/apply" method="post" class="update-form">
-      <span>Доступна новая версия приложения ({{ update_info.version }}).</span>
-      <button type="submit" class="update-btn">Скачать и установить</button>
-      <span class="update-note">Программа скачает файл и перезапустится сама — старую копию менять не нужно.</span>
+    <form action="/update/apply" method="post" class="update-form" id="update-form">
+      <button type="submit" class="update-btn" id="update-btn">Скачать и установить</button>
+      <span class="update-note">Программа скачает файл и перезапустится сама — старую копию менять не нужно. Несохранённого ничего нет: проверки хранятся на диске.</span>
     </form>
     {% else %}
-    Доступна новая версия приложения ({{ update_info.version }}) —
-    <a href="{{ update_info.url }}" target="_blank" rel="noopener">скачать</a>
+    <a class="btn" href="{{ update_info.url }}" target="_blank" rel="noopener">Скачать с GitHub</a>
     {% endif %}
   </div>
-  {% endif %}
+</div>
+{% endif %}
 
-  <h1>Проверка и сверка расписания — поиск накладок</h1>
+<div class="hero">
+  <h1>Проверка и сверка расписания</h1>
   <p class="lead">
-    Загрузите файлы расписания: ZIP-архив с индивидуальными занятиями (.xls/.xlsx),
-    отдельные файлы .doc/.docx с групповыми занятиями. Можно всё сразу, в любом сочетании.
+    Загрузите файлы расписания — программа сведёт их вместе и найдёт накладки:
+    преподаватель, кабинет или студент «в двух местах» одновременно.
   </p>
+  <ol class="steps">
+    <li>Загрузите файлы</li>
+    <li>Посмотрите накладки</li>
+    <li>Скачайте отчёт в Excel или Word</li>
+  </ol>
+</div>
 
-  <form action="/import" method="post" enctype="multipart/form-data" class="upload-form" id="upload-form">
-    <label class="drop-label">
-      <span>Файлы расписания (ZIP / .xls / .xlsx / .doc / .docx)</span>
-      <input type="file" name="files" id="file-input" multiple required
-             accept=".zip,.xls,.xlsx,.doc,.docx">
-      <span class="field-hint">Можно открывать окно выбора файлов несколько раз подряд — новые файлы добавятся к уже выбранным, а не заменят их.</span>
-    </label>
+<form action="/import" method="post" enctype="multipart/form-data" class="upload-form" id="upload-form">
+  <label class="dropzone" id="dropzone">
+    <input type="file" name="files" id="file-input" multiple required accept=".zip,.xls,.xlsx,.doc,.docx">
+    <span class="dropzone-icon">📂</span>
+    <span class="dropzone-title">Перетащите файлы сюда или нажмите, чтобы выбрать</span>
+    <span class="dropzone-hint">ZIP-архив, .xls / .xlsx (индивидуальные), .doc / .docx (групповые) — можно всё сразу, в любом сочетании</span>
+  </label>
+  <p class="dropzone-hint" style="margin:0">Выбирать файлы можно несколько раз подряд — новые добавятся к уже выбранным, а не заменят их.</p>
 
-    <div id="file-list-summary" class="file-list-summary" hidden></div>
-    <ul id="file-list" class="file-list"></ul>
+  <div id="file-list-summary" class="file-list-summary" hidden></div>
+  <ul id="file-list" class="file-list"></ul>
 
-    <button type="submit" id="submit-btn">Загрузить и найти накладки</button>
-  </form>
+  <button type="submit" id="submit-btn">Загрузить и найти накладки</button>
+</form>
 
   <script>
     const fileInput = document.getElementById('file-input');
@@ -110,6 +120,19 @@
       renderFileList();
     });
 
+    // Перетаскивание файлов мышью на область загрузки.
+    const dropzone = document.getElementById('dropzone');
+    ['dragenter', 'dragover'].forEach(ev => dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add('dragover'); }));
+    ['dragleave', 'drop'].forEach(ev => dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); }));
+    dropzone.addEventListener('drop', (e) => {
+      const existingKeys = new Set(selectedFiles.map(fileKey));
+      for (const f of e.dataTransfer.files) {
+        if (!existingKeys.has(fileKey(f))) { selectedFiles.push(f); existingKeys.add(fileKey(f)); }
+      }
+      syncInputFiles();
+      renderFileList();
+    });
+
     document.getElementById('upload-form').addEventListener('submit', (e) => {
       const btn = document.getElementById('submit-btn');
       btn.disabled = true;
@@ -117,22 +140,20 @@
     });
   </script>
 
-  {% if recent %}
-  <h2>Недавние проверки</h2>
-  <ul class="recent-list">
-    {% for row in recent %}
-    <li>
-      <a href="/report/{{ row['id'] }}">{{ row['created_at'] }}</a>
-      <form method="post" action="/report/{{ row['id'] }}/delete" class="delete-import-form"
-            onsubmit="return confirm('Удалить эту проверку без возможности восстановления?');">
-        <button type="submit" class="delete-link">Удалить</button>
-      </form>
-    </li>
-    {% endfor %}
-  </ul>
-  {% endif %}
+{% if recent %}
+<h2>Недавние проверки</h2>
+<ul class="recent-list">
+  {% for row in recent %}
+  <li>
+    <a href="/report/{{ row['id'] }}">{{ row['created_at'] }}</a>
+    <form method="post" action="/report/{{ row['id'] }}/delete" class="delete-import-form"
+          onsubmit="return confirm('Удалить эту проверку без возможности восстановления?');">
+      <button type="submit" class="delete-link">Удалить</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
 
-  <p class="version-footer">версия {{ app_version }}</p>
-</div>
-</body>
-</html>
+<p class="version-footer">версия {{ app_version }}</p>
+{% endblock %}

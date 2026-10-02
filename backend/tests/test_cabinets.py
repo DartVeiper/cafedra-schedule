@@ -96,19 +96,25 @@ def test_build_room_schedule_no_conflict_for_single_occupant(make_lesson):
     assert schedule[0][0]["conflict_with"] is None
 
 
-def test_merge_time_axis_combines_times_across_days(make_lesson):
+def test_grid_rows_align_days_by_slot_number_not_clock_time(make_lesson):
     a = make_lesson(day=0, start="10:15", room="101")
     b = make_lesson(day=1, start="11:00", room="101")
 
     schedule = cabinets.build_room_schedule([a, b], "101")
+    rows = cabinets.grid_rows(schedule, [0, 1])
 
-    assert cabinets.merge_time_axis(schedule) == ["10:15", "11:00"]
+    assert len(rows) == 1
+    assert rows[0][0]["start"] == "10:15" and rows[0][1]["start"] == "11:00"
+    assert rows[0][0]["occupied_by"] is a
 
 
-def test_index_by_time_allows_lookup_by_day_and_time(make_lesson):
-    a = make_lesson(day=0, start="10:15", room="101")
+def test_grid_rows_pads_shorter_days_with_none(make_lesson):
+    lessons = [
+        make_lesson(day=0, start="10:15", room="101"),
+        make_lesson(day=0, start="11:05", room="101", student="Другой"),
+        make_lesson(day=1, start="10:15", room="101", student="Третий"),
+    ]
+    schedule = cabinets.build_room_schedule(lessons, "101")
+    rows = cabinets.grid_rows(schedule, [0, 1])
 
-    schedule = cabinets.build_room_schedule([a], "101")
-    indexed = cabinets.index_by_time(schedule)
-
-    assert indexed[0]["10:15"]["occupied_by"] is a
+    assert len(rows) == 2 and rows[1][1] is None

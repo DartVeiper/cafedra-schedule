@@ -1,163 +1,378 @@
-<!doctype html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<title>Отчёт по накладкам</title>
-<link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<div class="page">
-  <p>
-    <a href="/">&larr; Загрузить другой набор файлов</a>
-    ·
-    <a href="/report/{{ import_id }}/cabinets">Кабинеты</a>
-    ·
+{% extends "base.html" %}
+{% set nav = 'report' %}
+{% block title %}Отчёт по накладкам · Проверка расписания{% endblock %}
+
+{% macro room_text(l) -%}
+{%- set r = (l.room_raw or '')|replace('\n', ' ')|trim -%}
+{%- if 'ауд' in r|lower or 'корпус' in r|lower or 'с/з' in r|lower -%}{{ r }}{%- else -%}ауд. {{ r }}{%- endif -%}
+{%- endmacro %}
+
+{% macro lesson_card(l) %}
+<div class="lesson">
+  <div class="lesson-who">{{ l.teacher_name or l.accompanist_name or '—' }}<span class="lesson-role">{% if l.lesson_type.value == 'group' %}групповое{% elif l.teacher_name %}преп.{% else %}конц.{% endif %}</span></div>
+  <div class="lesson-meta">
+    <span class="tag tag-time">{{ fmt_range(l) }}</span>
+    {% if l.room_raw %}<span class="tag tag-room">{{ room_text(l) }}</span>{% endif %}
+    {% if l.group_raw %}<span class="tag">{{ l.group_raw }}</span>{% endif %}
+  </div>
+  {% if l.student_name %}<div class="lesson-subject">студент: <b>{{ l.student_name }}</b></div>{% endif %}
+  {% if l.subject %}<div class="lesson-subject">{{ l.subject }}</div>{% endif %}
+  <div class="source">{{ l.source.label() }}</div>
+</div>
+{% endmacro %}
+
+{% macro conflict_card(c, dismissed=false) %}
+{% set key = conflict_key(c) %}
+{% set who_a = c.lesson_a.teacher_name or c.lesson_a.accompanist_name or '—' %}
+{% set who_b = c.lesson_b.teacher_name or c.lesson_b.accompanist_name or '—' %}
+{% set is_pairing = c.type.value == 'accompanist_pairing' %}
+<article class="conflict{% if is_pairing %} is-pairing{% endif %}{% if not c.is_certain %} is-review{% endif %}{% if dismissed %} is-dismissed{% endif %}"
+         data-kind="{{ 'pairing' if is_pairing else 'conflict' }}" data-day="{{ c.day_of_week }}" data-certain="{{ 1 if c.is_certain else 0 }}">
+  <div class="when">
+    <span class="when-day">{{ day_names[c.day_of_week] }}</span>
+    <span class="when-time">{{ overlap_range(c) }}</span>
+  </div>
+  <div class="pair">
+    {{ lesson_card(c.lesson_a) }}
+    <div class="vs">{{ '+' if is_pairing else '×' }}</div>
+    {{ lesson_card(c.lesson_b) }}
+  </div>
+  <div class="conflict-side">
+    {% if not c.is_certain %}<span class="badge">ПРОВЕРИТЬ</span>{% endif %}
+    {% if is_pairing and not dismissed %}<span class="pairing-ok">{{ 'Нужно сверить' if not c.is_certain else 'Обычная пара' }}</span>{% endif %}
+    {% if c.note %}<div class="conflict-note">{{ c.note }}</div>{% endif %}
+    {% if dismissed %}
+    <form method="post" action="/report/{{ import_id }}/restore" class="restore-form">
+      <input type="hidden" name="key" value="{{ key }}">
+      <input type="hidden" name="qs" value="{{ qs }}">
+      <button type="submit" class="btn-ghost">Вернуть в отчёт</button>
+    </form>
+    {% else %}
+    <form method="post" action="/report/{{ import_id }}/dismiss" class="dismiss-form">
+      <input type="hidden" name="key" value="{{ key }}">
+      <input type="hidden" name="label" value="{{ who_a }} × {{ who_b }}, {{ day_names[c.day_of_week] }} {{ overlap_range(c) }}">
+      <input type="hidden" name="qs" value="{{ qs }}">
+      <button type="submit" class="btn-ghost" title="Скрыть из отчёта: разобрано, это нормально">{{ 'Проверено' if is_pairing else 'Это не накладка' }}</button>
+    </form>
+    {% endif %}
+  </div>
+</article>
+{% endmacro %}
+
+{% macro warn_head(text) -%}
+{%- set head, sep, tail = text.partition(': ') -%}
+{%- if sep -%}<b>{{ head }}</b>: {{ tail }}{%- else -%}{{ text }}{%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Отчёт по накладкам</h1>
+    <p class="lead">{{ lesson_count }} занятий: {{ individual_count }} индивидуальных и {{ group_count }} групповых</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="/report/{{ import_id }}/export.xlsx{{ export_qs }}">⬇ Excel</a>
+    <a class="btn btn-secondary" href="/report/{{ import_id }}/export.docx{{ export_qs }}">⬇ Word</a>
     <form method="post" action="/report/{{ import_id }}/delete" class="delete-import-form"
           onsubmit="return confirm('Удалить эту проверку без возможности восстановления?');">
-      <button type="submit" class="delete-link">Удалить эту проверку</button>
+      <button type="submit" class="delete-link">Удалить проверку</button>
     </form>
-  </p>
-  <h1>Отчёт по накладкам</h1>
-
-  {% if notes.failed_files %}
-  <div class="failed-files-banner">
-    <b>Не удалось прочитать {{ notes.failed_files|length }} файл(ов) — они пропущены, остальные обработаны:</b>
-    <ul>
-      {% for f in notes.failed_files %}<li>{{ f }}</li>{% endfor %}
-    </ul>
   </div>
-  {% endif %}
-
-  {% set lost_notes = [] %}
-  {% for n in notes.dropped_sheet_notes %}{% if 'ВНИМАНИЕ' in n %}{% set _ = lost_notes.append(n) %}{% endif %}{% endfor %}
-  {% if lost_notes %}
-  <div class="failed-files-banner">
-    <b>Часть занятий могла не попасть в проверку ({{ lost_notes|length }}) — при удалении дубликата листа в нём нашлись записи, которых нет в оставленном:</b>
-    <ul>
-      {% for n in lost_notes %}<li>{{ n }}</li>{% endfor %}
-    </ul>
-  </div>
-  {% endif %}
-
-  <div class="summary">
-    <div class="summary-card">
-      <div class="summary-number">{{ lesson_count }}</div>
-      <div class="summary-label">занятий всего ({{ individual_count }} индивид. + {{ group_count }} групп.)</div>
-    </div>
-    <div class="summary-card certain">
-      <div class="summary-number">{{ certain_count }}</div>
-      <div class="summary-label">явных накладок</div>
-    </div>
-    <div class="summary-card review">
-      <div class="summary-number">{{ review_count }}</div>
-      <div class="summary-label">требуют ручной проверки</div>
-    </div>
-  </div>
-
-  <form method="get" action="/report/{{ import_id }}" class="toggle-form">
-    <label class="toggle-label">
-      <input type="checkbox" name="hide_accompanist" value="true" onchange="this.form.submit()" {% if hide_accompanist %}checked{% endif %}>
-      Скрыть накладки с участием концертмейстера
-    </label>
-    <label class="person-filter-label">
-      Показать только по ФИО:
-      <select name="person" onchange="this.form.submit()">
-        <option value="">— все —</option>
-        {% for n in all_names %}
-        <option value="{{ n }}" {% if n == person %}selected{% endif %}>{{ n }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </form>
-
-  {% set export_qs = [] %}
-  {% if hide_accompanist %}{% set _ = export_qs.append('hide_accompanist=true') %}{% endif %}
-  {% if person %}{% set _ = export_qs.append('person=' + person|urlencode) %}{% endif %}
-  <p>
-    <a class="export-link" href="/report/{{ import_id }}/export.xlsx{% if export_qs %}?{{ export_qs|join('&') }}{% endif %}">Скачать отчёт в Excel</a>
-    &nbsp;·&nbsp;
-    <a class="export-link" href="/report/{{ import_id }}/export.docx{% if export_qs %}?{{ export_qs|join('&') }}{% endif %}">Скачать отчёт в Word</a>
-  </p>
-
-  {% if person and certain_count == 0 and review_count == 0 %}
-  <div class="all-clear-banner">У «{{ person }}» накладок не найдено — всё в порядке.</div>
-  {% endif %}
-
-  {% for group in conflict_groups %}
-    {% if group.conflicts %}
-    <h2>{{ group.label }} <span class="count">({{ group.conflicts|length }})</span></h2>
-    <table class="conflict-table">
-      <thead>
-        <tr>
-          <th>День</th><th>Запись A</th><th>Запись B</th><th>Примечание</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for c in group.conflicts %}
-        <tr class="{{ 'review-row' if not c.is_certain else '' }}">
-          <td>{{ day_names[c.day_of_week] }}</td>
-          <td>
-            <div class="lesson-cell">
-              <b>{{ c.lesson_a.teacher_name or c.lesson_a.accompanist_name or '—' }}</b>
-              {{ c.lesson_a.start_time.strftime('%H:%M') }}
-              {% if c.lesson_a.student_name %}· студент {{ c.lesson_a.student_name }}{% endif %}
-              · гр.{{ c.lesson_a.group_raw or '—' }} · {{ c.lesson_a.subject or '—' }} · ауд.{{ c.lesson_a.room_raw or '—' }}
-              <div class="source">{{ c.lesson_a.source.label() }}</div>
-            </div>
-          </td>
-          <td>
-            <div class="lesson-cell">
-              <b>{{ c.lesson_b.teacher_name or c.lesson_b.accompanist_name or '—' }}</b>
-              {{ c.lesson_b.start_time.strftime('%H:%M') }}
-              {% if c.lesson_b.student_name %}· студент {{ c.lesson_b.student_name }}{% endif %}
-              · гр.{{ c.lesson_b.group_raw or '—' }} · {{ c.lesson_b.subject or '—' }} · ауд.{{ c.lesson_b.room_raw or '—' }}
-              <div class="source">{{ c.lesson_b.source.label() }}</div>
-            </div>
-          </td>
-          <td>{% if not c.is_certain %}<span class="badge">проверить</span>{% endif %} {{ c.note or '' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-  {% endfor %}
-
-  <h2>Служебная информация об импорте</h2>
-  <details>
-    <summary>Загруженные файлы ({{ notes.individual_files|length }} индивид. + {{ notes.group_files|length }} групп.)</summary>
-    <ul>
-      {% for f in notes.individual_files %}<li>{{ f }}</li>{% endfor %}
-      {% for f in notes.group_files %}<li>{{ f }}</li>{% endfor %}
-    </ul>
-  </details>
-  <details>
-    <summary>Отброшенные листы-дубликаты ({{ notes.dropped_sheet_notes|length }})</summary>
-    <ul>{% for n in notes.dropped_sheet_notes %}<li>{{ n }}</li>{% endfor %}</ul>
-  </details>
-  <details>
-    <summary>Слияния почти-дублей ({{ notes.merge_notes|length }})</summary>
-    <ul>{% for n in notes.merge_notes %}<li>{{ n }}</li>{% endfor %}</ul>
-  </details>
-  <details>
-    <summary>Пропущенные пустые листы ({{ notes.skipped_sheet_notes|length }})</summary>
-    <ul>{% for n in notes.skipped_sheet_notes %}<li>{{ n }}</li>{% endfor %}</ul>
-  </details>
-  <details>
-    <summary>Предупреждения парсинга ({{ notes.parse_warnings|length }})</summary>
-    <ul>{% for n in notes.parse_warnings %}<li>{{ n }}</li>{% endfor %}</ul>
-  </details>
-  {% if notes.zip_rename_notes %}
-  <details>
-    <summary>Исправленные имена файлов из ZIP ({{ notes.zip_rename_notes|length }})</summary>
-    <ul>{% for n in notes.zip_rename_notes %}<li>{{ n }}</li>{% endfor %}</ul>
-  </details>
-  {% endif %}
-  {% if notes.upload_warnings %}
-  <details open>
-    <summary>Пропущенные файлы при загрузке ({{ notes.upload_warnings|length }})</summary>
-    <ul>{% for n in notes.upload_warnings %}<li>{{ n }}</li>{% endfor %}</ul>
-  </details>
-  {% endif %}
 </div>
-</body>
-</html>
+
+{# ---------- Сводка ---------- #}
+<div class="kpis">
+  <div class="kpi is-certain">
+    <div class="kpi-number" id="kpi-certain">{{ certain_count }}</div>
+    <div class="kpi-label">явных накладок{% if has_filters %} (по фильтру){% endif %}</div>
+  </div>
+  <div class="kpi is-review">
+    <div class="kpi-number" id="kpi-review">{{ review_count }}</div>
+    <div class="kpi-label">требуют ручной проверки</div>
+  </div>
+  <div class="kpi is-pairing">
+    <div class="kpi-number" id="kpi-pairing">{{ pairing_count }}</div>
+    <div class="kpi-label">пар «преп. + концертмейстер» для сверки (не накладки)</div>
+    {% if pairing_count %}<a class="kpi-link" href="#sec-accompanist_pairing">перейти к списку</a>{% endif %}
+  </div>
+  <div class="kpi is-muted">
+    <div class="kpi-number" id="kpi-dismissed">{{ dismissed_total }}</div>
+    <div class="kpi-label">помечено «это не накладка»</div>
+    {% if dismissed_total %}
+      {% if show_dismissed %}
+      <a class="kpi-link" href="{{ link(show_dismissed='') }}">скрыть список</a>
+      {% else %}
+      <a class="kpi-link" href="{{ link(show_dismissed='true') }}#dismissed">показать</a>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{# ---------- Что стоит проверить в исходных файлах ---------- #}
+{% set parse_warnings = notes.parse_warnings or [] %}
+{% set upload_warnings = notes.upload_warnings or [] %}
+{% if notes.failed_files or lost_notes or parse_warnings or upload_warnings or irregular_times %}
+<section class="attention" aria-label="Что стоит проверить в исходных файлах">
+  {% if notes.failed_files %}
+  <details class="att att-danger" open>
+    <summary><span class="att-icon">⛔</span>Не удалось прочитать файлы: {{ notes.failed_files|length }}
+      <span class="att-hint">— они пропущены, остальные обработаны</span></summary>
+    <ul class="att-list">{% for f in notes.failed_files %}<li>{{ f }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  {% if lost_notes %}
+  <details class="att att-danger" open>
+    <summary><span class="att-icon">⚠️</span>Часть занятий могла не попасть в проверку: {{ lost_notes|length }}
+      <span class="att-hint">— при удалении дубликата листа в нём нашлись записи, которых нет в оставленном</span></summary>
+    <ul class="att-list">{% for n in lost_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  {% if irregular_times %}
+  <details class="att att-warn" {% if irregular_times|length <= 5 %}open{% endif %}>
+    <summary><span class="att-icon">🕐</span>Нестандартное время начала: {{ irregular_times|length }}
+      <span class="att-hint">— возможно, преподаватель ошибся во времени, сверьте с сеткой дня</span></summary>
+    <ul class="att-list">
+      {% for t in irregular_times %}
+      <li><b>{{ t.who }}</b>{% if t.student %}, студент {{ t.student }}{% endif %}{% if t.room %}, ауд. {{ t.room }}{% endif %}:
+        {{ t.text }} <span class="att-hint">({{ t.source }})</span></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+  {% if parse_warnings %}
+  <details class="att att-warn" {% if parse_warnings|length <= 5 %}open{% endif %}>
+    <summary><span class="att-icon">📝</span>Неясные места в файлах: {{ parse_warnings|length }}
+      <span class="att-hint">— возможные опечатки, стоит сверить с исходниками</span></summary>
+    <ul class="att-list">{% for n in parse_warnings %}<li>{{ warn_head(n) }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  {% if upload_warnings %}
+  <details class="att att-warn" open>
+    <summary><span class="att-icon">📎</span>Пропущено при загрузке: {{ upload_warnings|length }}</summary>
+    <ul class="att-list">{% for n in upload_warnings %}<li>{{ n }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+
+{# ---------- Фильтры ---------- #}
+<div class="filterbar">
+  <form method="get" action="/report/{{ import_id }}" class="filterbar-card" id="filter-form">
+    {% if day is not none %}<input type="hidden" name="day" value="{{ day }}">{% endif %}
+    {% if show_dismissed %}<input type="hidden" name="show_dismissed" value="true">{% endif %}
+
+    <div class="filter-row">
+      <span class="filter-label">День</span>
+      <div class="chips">
+        <a class="chip {{ 'active' if day is none else '' }}" href="{{ link(day='') }}">Все <span class="n" data-day-chip="all">{{ day_total }}</span></a>
+        {% for d in day_options %}
+        <a class="chip {{ 'active' if day == d else '' }}" href="{{ link(day=d|string) }}">{{ day_short[d] }} <span class="n" data-day-chip="{{ d }}">{{ day_counts.get(d, 0) }}</span></a>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="filter-row">
+      <label class="filter-field">
+        <span class="filter-label">Кабинет</span>
+        <select name="room" onchange="this.form.submit()">
+          <option value="">все</option>
+          {% for value, label in room_options %}
+          <option value="{{ value }}" {% if value == room %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="filter-field">
+        <span class="filter-label">ФИО</span>
+        <select name="person" onchange="this.form.submit()">
+          <option value="">все</option>
+          {% for n in all_names %}
+          <option value="{{ n }}" {% if n == person %}selected{% endif %}>{{ n }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="toggle-label">
+        <input type="checkbox" name="hide_accompanist" value="true" onchange="this.form.submit()" {% if hide_accompanist %}checked{% endif %}>
+        Скрыть накладки с концертмейстером
+      </label>
+      {% if has_filters %}
+      <a class="reset-link" href="{{ link(day='', room='', person='', hide_accompanist='') }}">Сбросить фильтры</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+{# ---------- Накладки ---------- #}
+{% set visible_groups = conflict_groups|selectattr('conflicts')|list %}
+{% set visible_pairing = pairing_groups|selectattr('conflicts')|list %}
+<div id="conflicts-root">
+{% if visible_groups or visible_pairing %}
+<nav class="jump" aria-label="Типы накладок">
+  {% for group in visible_groups + visible_pairing %}
+  <a href="#sec-{{ group.type.value }}"><span class="section-dot t-{{ group.type.value }}"></span>{{ group.label }} <span class="n" data-section-count="{{ group.type.value }}">{{ group.conflicts|length }}</span></a>
+  {% endfor %}
+</nav>
+
+{% endif %}
+{% for group in visible_groups %}
+<section id="sec-{{ group.type.value }}" data-section="{{ group.type.value }}">
+  <div class="section-head">
+    <span class="section-dot t-{{ group.type.value }}"></span>
+    <h2>{{ group.label }} <span class="count">(<span data-section-count="{{ group.type.value }}">{{ group.conflicts|length }}</span>)</span></h2>
+  </div>
+  <div class="conflict-list">
+    {% for c in group.conflicts %}{{ conflict_card(c) }}{% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+{% for group in pairing_groups if group.conflicts %}
+<section id="sec-{{ group.type.value }}" data-section="{{ group.type.value }}" class="pairing-section">
+  <div class="section-head">
+    <span class="section-dot t-{{ group.type.value }}"></span>
+    <h2>{{ group.label }} <span class="count">(<span data-section-count="{{ group.type.value }}">{{ group.conflicts|length }}</span>)</span></h2>
+  </div>
+  <p class="section-note">
+    Преподаватель и концертмейстер у одного студента в одном кабинете в одно время — обычная практика,
+    поэтому это <b>не накладки</b> и в счётчик явных накладок не входят. Но программа не знает, тот ли концертмейстер
+    назначен и по тому ли предмету, поэтому такие пары стоит просмотреть. Подозрительные (другой предмет,
+    «специальный инструмент») выделены. Когда проверили — нажмите «Проверено», и пара скроется.
+  </p>
+  <div class="conflict-list">
+    {% for c in group.conflicts %}{{ conflict_card(c) }}{% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+<div class="all-clear-banner" id="all-clear" {% if visible_groups %}hidden{% endif %}>
+  {% if has_filters %}По выбранным условиям накладок не найдено — всё в порядке.{% else %}Накладок не найдено — всё в порядке.{% endif %}
+</div>
+</div>
+
+{% if show_dismissed and dismissed_shown %}
+<section class="dismissed-box" id="dismissed">
+  <div class="section-head">
+    <h2>Помечено «это не накладка» <span class="count">({{ dismissed_shown }})</span></h2>
+    <form method="post" action="/report/{{ import_id }}/restore" class="restore-form"
+          onsubmit="return confirm('Вернуть в отчёт все помеченные накладки?');">
+      <input type="hidden" name="key" value="all">
+      <input type="hidden" name="qs" value="{{ qs }}">
+      <button type="submit" class="link-button">Вернуть все</button>
+    </form>
+  </div>
+  <div class="conflict-list">
+    {% for group in dismissed_groups %}{% for c in group.conflicts %}{{ conflict_card(c, true) }}{% endfor %}{% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{# ---------- Служебная информация ---------- #}
+<h2>Служебная информация об импорте</h2>
+<details class="info">
+  <summary>Загруженные файлы ({{ notes.individual_files|length }} индивид. + {{ notes.group_files|length }} групп.)</summary>
+  <ul>
+    {% for f in notes.individual_files %}<li>{{ f }}</li>{% endfor %}
+    {% for f in notes.group_files %}<li>{{ f }}</li>{% endfor %}
+  </ul>
+</details>
+<details class="info">
+  <summary>Отброшенные листы-дубликаты ({{ notes.dropped_sheet_notes|length }})</summary>
+  <ul>{% for n in notes.dropped_sheet_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+</details>
+<details class="info">
+  <summary>Слияния почти-дублей ({{ notes.merge_notes|length }})</summary>
+  <ul>{% for n in notes.merge_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+</details>
+<details class="info">
+  <summary>Пропущенные пустые листы ({{ notes.skipped_sheet_notes|length }})</summary>
+  <ul>{% for n in notes.skipped_sheet_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+</details>
+{% if notes.zip_rename_notes %}
+<details class="info">
+  <summary>Исправленные имена файлов из ZIP ({{ notes.zip_rename_notes|length }})</summary>
+  <ul>{% for n in notes.zip_rename_notes %}<li>{{ n }}</li>{% endfor %}</ul>
+</details>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // «Это не накладка» без перезагрузки страницы: отправляем форму в фоне,
+  // убираем карточку и пересчитываем счётчики. Без JS форма работает обычным
+  // способом (страница перезагружается).
+  (function () {
+    const root = document.getElementById('conflicts-root');
+    if (!root) return;
+    const importId = {{ import_id|tojson }};
+    let toast = null, toastTimer = null;
+
+    function bump(el, delta) { if (el) el.textContent = Math.max(0, (parseInt(el.textContent, 10) || 0) + delta); }
+
+    function showToast(key, qs) {
+      if (toast) toast.remove();
+      clearTimeout(toastTimer);
+      toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.innerHTML = '<span>Скрыто из отчёта</span>';
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.textContent = 'Отменить';
+      undo.addEventListener('click', async () => {
+        const body = new FormData(); body.append('key', key); body.append('qs', qs);
+        await fetch('/report/' + importId + '/restore', { method: 'POST', body, headers: { 'X-Requested-With': 'fetch' } });
+        location.reload();
+      });
+      toast.appendChild(undo);
+      document.body.appendChild(toast);
+      toastTimer = setTimeout(() => toast && toast.remove(), 8000);
+    }
+
+    root.addEventListener('submit', async (e) => {
+      const form = e.target.closest('.dismiss-form');
+      if (!form) return;
+      e.preventDefault();
+      const card = form.closest('.conflict');
+      const body = new FormData(form);
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+      let ok = false;
+      try {
+        const resp = await fetch(form.action, { method: 'POST', body, headers: { 'X-Requested-With': 'fetch' } });
+        ok = resp.ok;
+      } catch (err) { ok = false; }
+      if (!ok) { form.submit(); return; }
+
+      const day = card.dataset.day;
+      const certain = card.dataset.certain === '1';
+      const isPairing = card.dataset.kind === 'pairing';
+      const section = card.closest('[data-section]');
+      card.classList.add('removing');
+      setTimeout(() => {
+        card.remove();
+        bump(document.getElementById('kpi-dismissed'), +1);
+        if (isPairing) {
+          bump(document.getElementById('kpi-pairing'), -1);
+        } else {
+          bump(document.getElementById(certain ? 'kpi-certain' : 'kpi-review'), -1);
+          bump(document.querySelector('[data-day-chip="all"]'), -1);
+          bump(document.querySelector('[data-day-chip="' + day + '"]'), -1);
+        }
+        if (section) {
+          const left = section.querySelectorAll('.conflict').length;
+          document.querySelectorAll('[data-section-count="' + section.dataset.section + '"]').forEach(el => el.textContent = left);
+          if (!left) {
+            section.remove();
+            document.querySelectorAll('.jump a[href="#sec-' + section.dataset.section + '"]').forEach(a => a.remove());
+          }
+        }
+        if (!root.querySelector('.conflict')) {
+          const nav = root.querySelector('.jump'); if (nav) nav.remove();
+        }
+        if (!root.querySelector('.conflict[data-kind="conflict"]')) {
+          document.getElementById('all-clear').hidden = false;
+        }
+      }, 250);
+      showToast(body.get('key'), body.get('qs') || '');
+    });
+  })();
+</script>
+{% endblock %}

@@ -69,3 +69,12 @@ def make_sheet_result():
         )
 
     return _make
+
+
+@pytest.fixture(autouse=True)
+def _isolated_dismissed_file(tmp_path, monkeypatch):
+    """Пометки «это не накладка» по умолчанию пишутся в config/ репозитория —
+    в тестах подменяем на временный файл, чтобы тесты не трогали реальные данные."""
+    from app import main as main_module
+
+    monkeypatch.setattr(main_module, "DISMISSED_PATH", str(tmp_path / "dismissed_test.json"))

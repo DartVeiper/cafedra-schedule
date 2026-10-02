@@ -4,5 +4,5 @@
 (build_exe.bat), запушьте, создайте на GitHub Release с тегом того же
 номера (например 'v0.2.0') и приложите свежий .exe файлом к релизу.
 """
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 GITHUB_REPO = "DartVeiper/cafedra-schedule"

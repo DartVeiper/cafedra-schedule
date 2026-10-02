@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Проверка расписания{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css?v={{ app_version }}-{{ css_stamp }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/"><span class="brand-mark">▦</span>Проверка расписания</a>
+    <nav class="topnav">
+      <a href="/" class="{{ 'active' if nav == 'upload' else '' }}">Загрузка</a>
+      {% if import_id %}
+      <a href="/report/{{ import_id }}" class="{{ 'active' if nav == 'report' else '' }}">Отчёт</a>
+      <a href="/report/{{ import_id }}/cabinets" class="{{ 'active' if nav == 'cabinets' else '' }}">Кабинеты</a>
+      {% endif %}
+    </nav>
+    {% set upd = update_info if update_info is defined else cached_update() %}
+    <button type="button" class="whatsnew-btn" id="whatsnew-btn" data-version="{{ app_version }}"
+            data-update="{{ upd.version if upd else '' }}" title="Что нового в программе">
+      <span class="whatsnew-icon">i</span>Что нового<span class="whatsnew-dot" id="whatsnew-dot" hidden></span>
+    </button>
+  </div>
+</header>
+
+<dialog id="whatsnew" class="whatsnew">
+  <div class="whatsnew-head">
+    <h2>Что нового в программе</h2>
+    <button type="button" class="whatsnew-close" id="whatsnew-close" aria-label="Закрыть">✕</button>
+  </div>
+  <div class="whatsnew-body">
+    {% if upd %}
+    <section class="wn-update" id="wn-update">
+      <h3>Доступна новая версия {{ upd.version }}</h3>
+      {% if upd.notes %}<div class="wn-notes">{{ upd.notes|md }}</div>{% else %}<p class="wn-muted">Автор не оставил описания к этой версии.</p>{% endif %}
+      <p class="wn-muted">Установить обновление можно на <a href="/">главной странице</a> — кнопкой «Скачать и установить».</p>
+    </section>
+    {% endif %}
+    <h3 class="wn-title">Что менялось в версиях программы</h3>
+    {% for e in changelog_entries() %}
+    <section class="wn-entry">
+      <div class="wn-version">Версия {{ e.version }}
+        {% if e.installed %}<span class="wn-tag wn-tag-now">установлена</span>{% endif %}
+        {% if e.unreleased %}<span class="wn-tag wn-tag-dev">в разработке</span>{% endif %}
+        {% if e.date %}<span class="wn-date">{{ e.date }}</span>{% endif %}
+      </div>
+      {% for title, items in e.sections %}
+      <h4>{{ title }}</h4>
+      <ul>{% for it in items %}<li>{{ it }}</li>{% endfor %}</ul>
+      {% endfor %}
+    </section>
+    {% endfor %}
+  </div>
+</dialog>
+<main class="page {% block page_class %}{% endblock %}">
+{% block content %}{% endblock %}
+</main>
+<script>
+  // Кнопка «Что нового». Точка на кнопке — пока человек не открывал окно для
+  // этой версии (или для найденного обновления). Сразу после обновления программы
+  // окно открывается само один раз — люди не заглядывают на GitHub.
+  (function () {
+    const btn = document.getElementById('whatsnew-btn');
+    const dlg = document.getElementById('whatsnew');
+    if (!btn || !dlg || !dlg.showModal) return;
+    const version = btn.dataset.version, update = btn.dataset.update;
+    const KEY = 'cafedra_seen_version', UKEY = 'cafedra_seen_update';
+    let seen = null, seenUpdate = null;
+    try { seen = localStorage.getItem(KEY); seenUpdate = localStorage.getItem(UKEY); } catch (e) {}
+
+    function markSeen() {
+      try { localStorage.setItem(KEY, version); if (update) localStorage.setItem(UKEY, update); } catch (e) {}
+      document.getElementById('whatsnew-dot').hidden = true;
+    }
+    function open(scrollToUpdate) {
+      dlg.showModal();
+      const u = document.getElementById('wn-update');
+      if (scrollToUpdate && u) u.scrollIntoView({ block: 'start' });
+      markSeen();
+    }
+    btn.addEventListener('click', () => open(false));
+    document.getElementById('whatsnew-close').addEventListener('click', () => dlg.close());
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+    window.openWhatsNew = open;
+
+    const justUpdated = seen !== null && seen !== version;     // не первый запуск, версия сменилась
+    const newUpdate = update && update !== seenUpdate;
+    if (justUpdated) { open(false); }
+    else if (seen === null) { markSeen(); }                      // самый первый запуск — молча запомнить
+    else if (newUpdate) { document.getElementById('whatsnew-dot').hidden = false; }
+  })();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
