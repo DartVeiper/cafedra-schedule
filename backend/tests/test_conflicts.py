@@ -126,3 +126,26 @@ def test_no_conflict_when_times_dont_overlap(make_lesson):
     b = make_lesson(teacher="Ананьев А.А.", room="418", start="09:20", duration=45)
 
     assert find_conflicts([a, b]) == []
+
+
+def test_group_lesson_in_department_room_clashes_with_individual_there(make_lesson):
+    """Групповая пара 'корпус №5 ауд.421' и индивидуальное занятие в кабинете 421
+    в то же время — накладка по аудитории (реальный случай: среда 18:15)."""
+    group = make_lesson(lesson_type=LessonType.GROUP, teacher="Курганская О.А.", student=None,
+                        room="421", start="18:15", duration=90, source_file="12МИИ.docx")
+    individual = make_lesson(teacher="Дусакова К.М.", room="421", start="18:15", source_file="Дусакова.xls")
+
+    conflicts = [c for c in find_conflicts([group, individual]) if c.type == ConflictType.ROOM_DOUBLE_BOOKED]
+
+    assert len(conflicts) == 1
+
+
+def test_conflicts_are_sorted_by_day_and_time(make_lesson):
+    late = make_lesson(day=4, start="16:00", teacher="А А.А.", student="С1", room="301")
+    late2 = make_lesson(day=4, start="16:00", teacher="Б Б.Б.", student="С2", room="301")
+    early = make_lesson(day=1, start="09:20", teacher="В В.В.", student="С3", room="302")
+    early2 = make_lesson(day=1, start="09:20", teacher="Г Г.Г.", student="С4", room="302")
+
+    conflicts = find_conflicts([late, late2, early, early2])
+
+    assert [c.day_of_week for c in conflicts] == [1, 4]

@@ -154,7 +154,8 @@ async def do_import(request: Request, files: list[UploadFile] = File(...)):
     zip_rename_notes: list[str] = []
 
     for uf in files:
-        name = uf.filename or "файл_без_имени"
+        # Только имя файла, без пути: имя приходит от браузера и попадает в os.path.join.
+        name = os.path.basename((uf.filename or "").replace("\\", "/")) or "файл_без_имени"
         ext = os.path.splitext(name)[1].lower()
         raw_bytes = await uf.read()
 
@@ -467,7 +468,7 @@ def export_xlsx(import_id: str, hide_accompanist: bool = False, person: str = ""
     for c in conflicts:
         a, b = c.lesson_a, c.lesson_b
 
-        def person(l):
+        def who(l):
             return l.teacher_name or l.accompanist_name or ""
 
         def timespan(l):
@@ -476,8 +477,8 @@ def export_xlsx(import_id: str, hide_accompanist: bool = False, person: str = ""
 
         ws.append([
             CONFLICT_LABELS[c.type], "да" if not c.is_certain else "", DAY_NAMES_RU[c.day_of_week], c.note or "",
-            timespan(a), person(a), a.student_name or "", a.group_raw or "", a.subject or "", a.room_raw or "", a.source.label(),
-            timespan(b), person(b), b.student_name or "", b.group_raw or "", b.subject or "", b.room_raw or "", b.source.label(),
+            timespan(a), who(a), a.student_name or "", a.group_raw or "", a.subject or "", a.room_raw or "", a.source.label(),
+            timespan(b), who(b), b.student_name or "", b.group_raw or "", b.subject or "", b.room_raw or "", b.source.label(),
         ])
     for i, _ in enumerate(headers, start=1):
         ws.column_dimensions[get_column_letter(i)].width = 20

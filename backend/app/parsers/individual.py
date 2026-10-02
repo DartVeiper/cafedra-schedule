@@ -29,6 +29,7 @@ from app.parsers.common import (
     normalize_group,
     normalize_person_name,
     normalize_room,
+    normalize_room_display,
     normalize_subject,
 )
 
@@ -270,7 +271,7 @@ def _extract_lesson_from_row(
         )
 
     subject = normalize_subject(subject_val) if isinstance(subject_val, str) else None
-    room_raw = None if room_val in (None, "") else str(room_val)
+    room_raw = normalize_room_display(room_val)
     room_norm = normalize_room(room_val)
 
     return Lesson(

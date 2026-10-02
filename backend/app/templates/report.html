@@ -28,6 +28,17 @@
   </div>
   {% endif %}
 
+  {% set lost_notes = [] %}
+  {% for n in notes.dropped_sheet_notes %}{% if 'ВНИМАНИЕ' in n %}{% set _ = lost_notes.append(n) %}{% endif %}{% endfor %}
+  {% if lost_notes %}
+  <div class="failed-files-banner">
+    <b>Часть занятий могла не попасть в проверку ({{ lost_notes|length }}) — при удалении дубликата листа в нём нашлись записи, которых нет в оставленном:</b>
+    <ul>
+      {% for n in lost_notes %}<li>{{ n }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
   <div class="summary">
     <div class="summary-card">
       <div class="summary-number">{{ lesson_count }}</div>

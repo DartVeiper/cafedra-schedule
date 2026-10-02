@@ -33,11 +33,38 @@ def normalize_group(raw: str | None) -> str | None:
     return s.upper()
 
 
+# Здание кафедры. В индивидуальных файлах (Формат 1) корпус не указан вовсе —
+# все кабинеты там "свои", а в групповых (Формат 2) тот же кабинет записан как
+# 'корпус №5 ауд.420'. Чтобы групповое занятие в кабинете кафедры сравнивалось
+# с индивидуальным в том же кабинете (накладки, сетка занятости), корпус кафедры
+# в нормализованном виде опускаем; чужие корпуса ('корпус №1 ауд.405') остаются
+# с префиксом — иначе 405 в корпусе №1 перепуталась бы с кабинетом 405 кафедры.
+HOME_BUILDING = "5"
+
+_ROOM_PREFIX_RE = re.compile(r"^ауд(?:итория)?\.?\s*", re.IGNORECASE)
+
+
+def normalize_room_display(raw: object) -> str | None:
+    """Номер аудитории для показа: 421.0 (float из Excel) -> '421'."""
+    if raw is None:
+        return None
+    if isinstance(raw, float) and raw.is_integer():
+        return str(int(raw))
+    s = str(raw).strip()
+    if not s:
+        return None
+    if re.fullmatch(r"\d+\.0", s):
+        s = s[:-2]
+    return s
+
+
 def normalize_room(raw: object, building: str | None = None) -> str | None:
     """Приводит номер аудитории к единому виду; учитывает корпус/здание, если известен.
 
-    Числа вида 418.0 (float из Excel) сводятся к '418'. Текстовые пометки ('м/з')
-    сохраняются как есть (в нижнем регистре, без лишних пробелов).
+    Числа вида 418.0 (float из Excel) сводятся к '418'. Приставка 'ауд.' и
+    пробелы после неё отбрасываются ('ауд.316' и 'ауд. 316' — один кабинет).
+    Текстовые пометки ('м/з') сохраняются как есть (в нижнем регистре, без
+    лишних пробелов). Корпус кафедры (HOME_BUILDING) в результат не попадает.
     """
     if raw is None:
         return None
@@ -53,10 +80,10 @@ def normalize_room(raw: object, building: str | None = None) -> str | None:
         # иногда номер аудитории приходит как "418.0" в текстовой ячейке
         if re.fullmatch(r"\d+\.0", room):
             room = room[:-2]
-    room = room.strip().lower()
+    room = _ROOM_PREFIX_RE.sub("", room.strip()).strip().lower()
     if not room:
         return None
-    if building:
+    if building and building.strip().lower() != HOME_BUILDING:
         return f"{building.strip().lower()}:{room}"
     return room
 

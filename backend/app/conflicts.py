@@ -32,6 +32,9 @@ def find_conflicts(lessons: list[Lesson]) -> list[Conflict]:
     conflicts.extend(_find_by_key(lessons, lambda l: l.room_normalized, ConflictType.ROOM_DOUBLE_BOOKED))
     conflicts.extend(_find_student_individual_conflicts(lessons))
     conflicts.extend(_find_student_vs_group_conflicts(lessons))
+    # Стабильная сортировка: внутри каждого типа накладки идут по дню и времени
+    # (а не в порядке чтения файлов) — так их удобно сверять с расписанием.
+    conflicts.sort(key=lambda c: (c.day_of_week, min(c.lesson_a.start_minutes, c.lesson_b.start_minutes)))
     return conflicts
 
 

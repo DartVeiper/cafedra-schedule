@@ -113,17 +113,35 @@ def test_blank_slot_produces_nothing():
     assert result.individual_marker_slots == []
 
 
-def test_room_building_is_split_out_for_normalization():
-    """'корпус №5 ауд.314' — здание ОБЯЗАТЕЛЬНО учитывается в нормализованном
-    виде, иначе аудитория 314 в корпусе №5 перепуталась бы с кабинетом 314
-    самой кафедры (там корпус вообще не указывается)."""
+def test_home_building_is_dropped_from_normalized_room():
+    """'корпус №5' — здание самой кафедры; в индивидуальных файлах корпус не
+    пишется вовсе, поэтому для сравнения кабинетов корпус кафедры опускаем
+    (иначе групповое занятие в 421 никогда не пересеклось бы с индивидуальным
+    в 421 — реальный пропуск накладки на данных кафедры)."""
     table_rows = [HEADER, row("Среда", "12-00", "История", "Иванов И.И.", "корпус №5 ауд.314")]
 
     result = rows_to_group_result(table_rows, "test.docx", "11Ф", "11Ф")
 
     lesson = result.lessons[0]
     assert lesson.room_raw == "корпус №5 ауд.314"
-    assert lesson.room_normalized == "5:ауд.314"
+    assert lesson.room_normalized == "314"
+
+
+def test_other_building_stays_in_normalized_room():
+    """Кабинет 405 в корпусе №1 — не кабинет 405 кафедры, корпус сохраняем."""
+    table_rows = [HEADER, row("Среда", "12-00", "История", "Иванов И.И.", "корпус №1 ауд.405")]
+
+    result = rows_to_group_result(table_rows, "test.docx", "11Ф", "11Ф")
+
+    assert result.lessons[0].room_normalized == "1:405"
+
+
+def test_room_spacing_after_aud_prefix_does_not_split_one_room():
+    """'ауд.316' и 'ауд. 316' в разных файлах — один и тот же кабинет."""
+    a = rows_to_group_result([HEADER, row("Среда", "12-00", "История", "И И.И.", "корпус №5 ауд.316")], "a.docx", "11Ф", "11Ф")
+    b = rows_to_group_result([HEADER, row("Среда", "12-00", "Химия", "П П.П.", "корпус №5 ауд. 316")], "b.docx", "12Ф", "12Ф")
+
+    assert a.lessons[0].room_normalized == b.lessons[0].room_normalized == "316"
 
 
 def test_lesson_type_is_group_and_group_fields_are_passed_through():
