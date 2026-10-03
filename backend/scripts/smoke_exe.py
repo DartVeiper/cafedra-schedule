@@ -15,6 +15,9 @@ import time
 import urllib.error
 import urllib.request
 
+# На GitHub Actions консоль Windows в cp1252 — русские слова в print упали бы с UnicodeEncodeError
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from app.version import APP_VERSION  # noqa: E402
 
