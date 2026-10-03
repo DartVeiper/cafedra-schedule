@@ -5,12 +5,14 @@
 """
 from __future__ import annotations
 
+import io
+import json
 import os
 import re
 import shutil
 import uuid
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -20,13 +22,15 @@ from fastapi.templating import Jinja2Templates
 from app import cabinets as cabinets_module
 from app import db, self_update
 from app import dismissed as dismissed_module
-from app import timegrid
+from app import load_checks, teacher_sheets, timegrid
 from app.conflicts import conflict_key, find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
 from app.parsers.common import strip_academic_title
 from app.paths import app_package_dir, cabinets_config_path, dismissed_conflicts_path, migrate_legacy_storage, runtime_data_dir
 from app.pipeline import known_groups_from_filenames, load_group_lessons, load_individual_lessons
+from app import backup as backup_module
 from app import changelog
+from app import compare as compare_module
 from app.mdlite import render_markdown_lite
 from app.update_check import cached_update, check_for_update
 from app.version import APP_VERSION
@@ -92,8 +96,37 @@ def _format_ru_datetime(value: str) -> str:
     return f"{dt.day} {_MONTHS_RU[dt.month]} {dt.year}, {dt.strftime('%H:%M')}"
 
 
+@app.get("/backup/download")
+def backup_download():
+    data = backup_module.build_backup(CABINETS_PATH, DISMISSED_PATH, APP_VERSION)
+    body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    name = f"cafedra-settings-{datetime.now():%Y-%m-%d}.json"
+    return StreamingResponse(
+        io.BytesIO(body), media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@app.post("/backup/restore")
+async def backup_restore(file: UploadFile = File(...)):
+    raw = await file.read(backup_module.MAX_BACKUP_BYTES + 1)
+    try:
+        if len(raw) > backup_module.MAX_BACKUP_BYTES:
+            raise backup_module.BackupError("Файл слишком большой для копии настроек.")
+        try:
+            data = json.loads(raw.decode("utf-8-sig"))
+        except (ValueError, UnicodeDecodeError):
+            raise backup_module.BackupError("Файл не читается — это не копия настроек программы.")
+        result = backup_module.restore_backup(data, CABINETS_PATH, DISMISSED_PATH)
+        msg = f"Копия восстановлена: добавлено кабинетов — {result['rooms']}, пометок «это не накладка» — {result['marks']}."
+        qs = urlencode({"backup_msg": msg, "backup_ok": "1"})
+    except backup_module.BackupError as e:
+        qs = urlencode({"backup_msg": str(e), "backup_ok": ""})
+    return RedirectResponse(url=f"/?{qs}#backup", status_code=303)
+
+
 @app.get("/", response_class=HTMLResponse)
-def upload_form(request: Request):
+def upload_form(request: Request, backup_msg: str = "", backup_ok: str = ""):
     conn = db.get_connection(DB_PATH)
     try:
         recent = db.list_imports(conn)[:10]
@@ -105,6 +138,8 @@ def upload_form(request: Request):
         "update_info": check_for_update(),
         "can_self_update": self_update.can_self_update(),
         "app_version": APP_VERSION,
+        "backup_msg": backup_msg[:300],
+        "backup_ok": bool(backup_ok),
     })
 
 
@@ -272,12 +307,13 @@ def cabinets_page(request: Request, import_id: str):
 
     config = cabinets_module.load_config(CABINETS_PATH)
     registered = cabinets_module.get_rooms(config)
-    suggested = sorted(cabinets_module.suggest_rooms(lessons) - set(registered), key=str.casefold)
+    suggested = sorted(cabinets_module.suggest_rooms(lessons) - set(registered), key=cabinets_module.room_sort_key)
 
     return templates.TemplateResponse(request, "cabinets.html", {
         "import_id": import_id,
         "rooms": registered,
         "suggested_rooms": suggested,
+        "suggested_floors": cabinets_module.group_rooms_by_floor(suggested),
         "irregular_by_room": cabinets_module.irregular_counts_by_room(lessons),
     })
 
@@ -286,6 +322,15 @@ def cabinets_page(request: Request, import_id: str):
 def cabinets_add(import_id: str, room: str = Form(...)):
     config = cabinets_module.load_config(CABINETS_PATH)
     cabinets_module.add_room(config, room)
+    cabinets_module.save_config(CABINETS_PATH, config)
+    return RedirectResponse(url=f"/report/{import_id}/cabinets", status_code=303)
+
+
+@app.post("/report/{import_id}/cabinets/add-many")
+def cabinets_add_many(import_id: str, rooms: list[str] = Form(default=[])):
+    config = cabinets_module.load_config(CABINETS_PATH)
+    for room in rooms[:500]:
+        cabinets_module.add_room(config, room)
     cabinets_module.save_config(CABINETS_PATH, config)
     return RedirectResponse(url=f"/report/{import_id}/cabinets", status_code=303)
 
@@ -318,6 +363,139 @@ def cabinet_schedule(request: Request, import_id: str, room: str):
             if i.lesson.room_normalized == room
         ],
         "day_names": DAY_NAMES_RU,
+    })
+
+
+def _today_text() -> str:
+    d = datetime.now()
+    return f"{d.day} {_MONTHS_RU[d.month]} {d.year}"
+
+
+def _load_sheets(import_id: str):
+    """(sheets, people) для листов преподавателям или None, если проверки нет."""
+    lessons, _ = _load_import(import_id)
+    if lessons is None:
+        return None
+    sel = _select_conflicts(lessons, _Filters())
+    sheets = teacher_sheets.build_sheets(sel.conflicts, timegrid.find_irregular_times(lessons))
+    return sheets, teacher_sheets.all_people(lessons)
+
+
+_NOT_FOUND = HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
+
+
+@app.get("/report/{import_id}/teachers", response_class=HTMLResponse)
+def teachers_page(request: Request, import_id: str):
+    loaded = _load_sheets(import_id)
+    if loaded is None:
+        return _NOT_FOUND
+    sheets, people = loaded
+    with_issues = sorted(sheets.values(), key=lambda s: (-len(s.items), s.name.casefold()))
+    clean = sorted((n for k, n in people.items() if k not in sheets), key=str.casefold)
+    return templates.TemplateResponse(request, "teachers.html", {
+        "import_id": import_id, "with_issues": with_issues, "clean": clean,
+    })
+
+
+def _sheet_response(request: Request, import_id: str, names: list | None):
+    loaded = _load_sheets(import_id)
+    if loaded is None:
+        return _NOT_FOUND
+    sheets, people = loaded
+    if names is None:                                   # все листы, у кого есть что показать
+        chosen = sorted(sheets.values(), key=lambda s: s.name.casefold())
+    else:
+        chosen = []
+        for name in names:
+            key = teacher_sheets.person_key(name)
+            if key in sheets:
+                chosen.append(sheets[key])
+            elif key in people:
+                chosen.append(teacher_sheets.Sheet(key, people[key]))
+        if not chosen:
+            return HTMLResponse("<h1>Преподаватель не найден</h1><p><a href='javascript:history.back()'>Назад</a></p>", status_code=404)
+    return templates.TemplateResponse(request, "teacher_sheet.html", {
+        "import_id": import_id, "sheets": chosen, "single": names is not None,
+        "created": _today_text(), "day_names": DAY_NAMES_RU,
+    })
+
+
+@app.get("/report/{import_id}/teacher", response_class=HTMLResponse)
+def teacher_sheet_page(request: Request, import_id: str, name: str = ""):
+    return _sheet_response(request, import_id, [name])
+
+
+@app.get("/report/{import_id}/teachers/print", response_class=HTMLResponse)
+def teachers_print_page(request: Request, import_id: str):
+    return _sheet_response(request, import_id, None)
+
+
+@app.get("/report/{import_id}/teacher.docx")
+def teacher_sheet_docx(import_id: str, name: str = ""):
+    loaded = _load_sheets(import_id)
+    if loaded is None:
+        return _NOT_FOUND
+    sheets, people = loaded
+    key = teacher_sheets.person_key(name)
+    if key not in people:
+        return HTMLResponse("Преподаватель не найден", status_code=404)
+    doc = teacher_sheets.build_docx(sheets.get(key) or teacher_sheets.Sheet(key, people[key]), _today_text())
+    import io
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(f"nakladki_{name}.docx")},
+    )
+
+
+@app.get("/report/{import_id}/load", response_class=HTMLResponse)
+def load_page(request: Request, import_id: str, max_lessons: int = load_checks.MAX_LESSONS_PER_DAY,
+              window_hours: float = load_checks.BIG_WINDOW_MINUTES / 60, day: str = ""):
+    lessons, _ = _load_import(import_id)
+    if lessons is None:
+        return _NOT_FOUND
+    max_lessons = min(max(max_lessons, 2), 20)
+    window_hours = min(max(window_hours, 1), 12)
+    items = load_checks.find_load_issues(lessons, max_lessons, int(window_hours * 60))
+    chosen = _parse_day(day)
+    shown = [i for i in items if chosen is None or i.day == chosen]
+    return templates.TemplateResponse(request, "load.html", {
+        "import_id": import_id,
+        "many": [i for i in shown if i.kind == "many"],
+        "windows": [i for i in shown if i.kind == "window"],
+        "max_lessons": max_lessons,
+        "window_hours": int(window_hours) if float(window_hours).is_integer() else window_hours,
+        "day": chosen,
+        "day_counts": {d: sum(1 for i in items if i.day == d) for d in range(len(DAY_NAMES_RU))},
+        "day_total": len(items),
+        "day_names": DAY_NAMES_RU, "day_short": DAY_SHORT_RU,
+    })
+
+
+@app.get("/report/{import_id}/free-rooms", response_class=HTMLResponse)
+def free_rooms_page(request: Request, import_id: str, day: str = ""):
+    lessons, notes = _load_import(import_id)
+    if lessons is None:
+        return HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
+
+    rooms = cabinets_module.department_rooms(cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH)))
+    days = sorted(timegrid.build_day_grids(lessons).keys())
+    chosen = _parse_day(day)
+    if chosen not in days:
+        chosen = days[0] if days else 0
+    view = cabinets_module.free_rooms_day(lessons, chosen, rooms, (notes or {}).get("special_slots", []))
+    return templates.TemplateResponse(request, "free_rooms.html", {
+        "import_id": import_id,
+        "days": days,
+        "day": chosen,
+        "day_names": DAY_NAMES_RU,
+        "view": view,
+        "has_rooms": bool(rooms),
+        "room_count": len(rooms),
+        "room_label": _room_label,
     })
 
 
@@ -407,6 +585,10 @@ def _overlap_range(c) -> str:
 # метки версии у методиста могла бы остаться старая вёрстка.
 templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["cached_update"] = cached_update
+# Вкладка «Свободные кабинеты» появляется только когда методист указал кабинеты своей кафедры.
+templates.env.globals["has_department_rooms"] = lambda: bool(
+    cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH))
+)
 templates.env.globals["changelog_entries"] = changelog.entries_for_display
 templates.env.filters["md"] = render_markdown_lite
 templates.env.globals["css_stamp"] = int(os.path.getmtime(os.path.join(APP_DIR, "static", "style.css")))
@@ -422,7 +604,9 @@ class _Filters:
     методист видит на экране."""
 
     def __init__(self, hide_accompanist: bool = False, person: str = "", day: str = "",
-                 room: str = "", show_dismissed: bool = False):
+                 room: str = "", show_dismissed: bool = False, changes: str = "", compare: str = ""):
+        self.changes = "new" if changes == "new" else ""     # "new" — только новые с прошлой проверки
+        self.compare = compare.strip()                        # "" — прошлая, "off" — не сравнивать, иначе id
         self.hide_accompanist = hide_accompanist
         self.person = person.strip()
         self.day = _parse_day(day)
@@ -436,6 +620,8 @@ class _Filters:
             "day": "" if self.day is None else str(self.day),
             "room": self.room,
             "show_dismissed": "true" if self.show_dismissed else "",
+            "changes": self.changes,
+            "compare": self.compare,
         }
         p.update(override)
         return {k: v for k, v in p.items() if v}
@@ -453,11 +639,10 @@ class _Selection:
         self.dismissed_total = dismissed_total
 
 
-def _room_sort_key(r: str):
-    return (not r.isdigit(), int(r) if r.isdigit() else 0, r)
+_room_sort_key = cabinets_module.room_sort_key
 
 
-def _select_conflicts(lessons: list, f: _Filters) -> _Selection:
+def _select_conflicts(lessons: list, f: _Filters, new_keys: set | None = None) -> _Selection:
     all_conflicts = find_conflicts(lessons)
     dismissed_keys = dismissed_module.load_dismissed(DISMISSED_PATH)
 
@@ -467,6 +652,8 @@ def _select_conflicts(lessons: list, f: _Filters) -> _Selection:
     base = _filter_conflicts_by_person(base, f.person)
     if f.room:
         base = [c for c in base if _conflict_in_room(c, f.room)]
+    if f.changes == "new" and new_keys is not None:
+        base = [c for c in base if conflict_key(c) in new_keys]
 
     def is_dismissed(c) -> bool:
         return conflict_key(c) in dismissed_keys
@@ -503,12 +690,43 @@ def _load_import(import_id: str):
         conn.close()
 
 
+def _comparison(import_id: str, lessons: list, f: _Filters):
+    """Сравнение с прошлой (или выбранной) проверкой — compare.Comparison или None.
+    Вторым значением — список других проверок для выпадающего списка."""
+    conn = db.get_connection(DB_PATH)
+    try:
+        rows = db.list_imports(conn)
+        prev = compare_module.pick_previous(rows, import_id, f.compare)
+        options = [(r["id"], _format_ru_datetime(r["created_at"])) for r in rows if r["id"] != import_id]
+        if prev is None:
+            return None, options
+        prev_lessons = db.load_lessons(conn, prev["id"])
+        prev_created = prev["created_at"]
+    finally:
+        conn.close()
+    cmp = compare_module.compare(
+        find_conflicts(lessons), find_conflicts(prev_lessons),
+        prev["id"], prev_created, len(prev_lessons), len(lessons),
+    )
+    return cmp, options
+
+
+def _new_keys_for_export(import_id: str, lessons: list, f: _Filters):
+    """Для выгрузок: ключи новых накладок, если на экране включён «только новые»."""
+    if f.changes != "new":
+        return None
+    cmp, _ = _comparison(import_id, lessons, f)
+    return cmp.new_keys if cmp else None
+
+
 def _build_report_context(import_id: str, f: _Filters | None = None) -> dict | None:
     f = f or _Filters()
     lessons, notes = _load_import(import_id)
     if lessons is None:
         return None
-    sel = _select_conflicts(lessons, f)
+    cmp, compare_options = _comparison(import_id, lessons, f)
+    new_keys = cmp.new_keys if cmp else None
+    sel = _select_conflicts(lessons, f, new_keys)
 
     def grouped(conflicts: list) -> list[dict]:
         by_type: dict[str, list] = {}
@@ -565,18 +783,32 @@ def _build_report_context(import_id: str, f: _Filters | None = None) -> dict | N
         "pairing_review_count": sum(1 for c in sel.pairings if not c.is_certain),
         "dismissed_groups": grouped(sel.dismissed),
         "dismissed_shown": len(sel.dismissed),
+        "cmp": cmp,
+        "cmp_label": _format_ru_datetime(cmp.prev_created) if cmp else "",
+        "cmp_fixed": [
+            {
+                "day": DAY_SHORT_RU[c.day_of_week], "when": _overlap_range(c), "kind": CONFLICT_LABELS[c.type],
+                "a": c.lesson_a.teacher_name or c.lesson_a.accompanist_name or "—",
+                "b": c.lesson_b.teacher_name or c.lesson_b.accompanist_name or "—",
+                "room": c.lesson_a.room_raw or c.lesson_b.room_raw or "",
+            }
+            for c in (cmp.fixed if cmp else [])
+        ],
+        "compare_options": compare_options,
+        "new_keys": new_keys or set(),
+        "only_new": f.changes == "new" and cmp is not None,
         "day_names": DAY_NAMES_RU,
         "qs": urlencode(f.as_params()),
         "link": link,
         "export_qs": f"?{urlencode(export_params)}" if export_params else "",
-        "has_filters": bool(f.hide_accompanist or f.person or f.day is not None or f.room),
+        "has_filters": bool(f.hide_accompanist or f.person or f.day is not None or f.room or f.changes),
     }
 
 
 @app.get("/report/{import_id}", response_class=HTMLResponse)
 def report(request: Request, import_id: str, hide_accompanist: bool = False, person: str = "",
-           day: str = "", room: str = "", show_dismissed: bool = False):
-    ctx = _build_report_context(import_id, _Filters(hide_accompanist, person, day, room, show_dismissed))
+           day: str = "", room: str = "", show_dismissed: bool = False, changes: str = "", compare: str = ""):
+    ctx = _build_report_context(import_id, _Filters(hide_accompanist, person, day, room, show_dismissed, changes, compare))
     if ctx is None:
         return HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
     return templates.TemplateResponse(request, "report.html", ctx)
@@ -614,11 +846,13 @@ def restore_conflict(request: Request, import_id: str, key: str = Form(""), qs: 
 
 
 @app.get("/api/report/{import_id}")
-def api_report(import_id: str, hide_accompanist: bool = False, person: str = "", day: str = "", room: str = ""):
+def api_report(import_id: str, hide_accompanist: bool = False, person: str = "", day: str = "", room: str = "",
+               changes: str = "", compare: str = ""):
     lessons, _ = _load_import(import_id)
     if lessons is None:
         return {"error": "import not found"}
-    sel = _select_conflicts(lessons, _Filters(hide_accompanist, person, day, room))
+    f = _Filters(hide_accompanist, person, day, room, changes=changes, compare=compare)
+    sel = _select_conflicts(lessons, f, _new_keys_for_export(import_id, lessons, f))
 
     def lesson_json(l):
         return {
@@ -643,14 +877,16 @@ def api_report(import_id: str, hide_accompanist: bool = False, person: str = "",
 
 
 @app.get("/report/{import_id}/export.xlsx")
-def export_xlsx(import_id: str, hide_accompanist: bool = False, person: str = "", day: str = "", room: str = ""):
+def export_xlsx(import_id: str, hide_accompanist: bool = False, person: str = "", day: str = "", room: str = "",
+                changes: str = "", compare: str = ""):
     import openpyxl
     from openpyxl.utils import get_column_letter
 
     lessons, _ = _load_import(import_id)
     if lessons is None:
         return HTMLResponse("Импорт не найден", status_code=404)
-    sel = _select_conflicts(lessons, _Filters(hide_accompanist, person, day, room))
+    f = _Filters(hide_accompanist, person, day, room, changes=changes, compare=compare)
+    sel = _select_conflicts(lessons, f, _new_keys_for_export(import_id, lessons, f))
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -771,8 +1007,9 @@ def _build_conflict_docx(ctx: dict):
 
 
 @app.get("/report/{import_id}/export.docx")
-def export_docx(import_id: str, hide_accompanist: bool = False, person: str = "", day: str = "", room: str = ""):
-    ctx = _build_report_context(import_id, _Filters(hide_accompanist, person, day, room))
+def export_docx(import_id: str, hide_accompanist: bool = False, person: str = "", day: str = "", room: str = "",
+                changes: str = "", compare: str = ""):
+    ctx = _build_report_context(import_id, _Filters(hide_accompanist, person, day, room, changes=changes, compare=compare))
     if ctx is None:
         return HTMLResponse("Импорт не найден", status_code=404)
 

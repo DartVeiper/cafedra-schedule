@@ -23,6 +23,7 @@ import os
 from app import timegrid
 from app.conflicts import find_conflicts
 from app.models import INDIVIDUAL_LESSON_MINUTES, ConflictType, Lesson, LessonType
+from app.parsers.common import normalize_room, strip_academic_title
 
 DEFAULT_DEPARTMENT_ID = "default"
 
@@ -63,7 +64,8 @@ def get_rooms(config: dict, department_id: str = DEFAULT_DEPARTMENT_ID) -> list[
 
 
 def add_room(config: dict, room: str, department_id: str = DEFAULT_DEPARTMENT_ID) -> dict:
-    room = room.strip()
+    # в том же виде, в каком кабинеты сравниваются в занятиях: '418.0' / 'ауд. 418' -> '418'
+    room = normalize_room(room) or ""
     dept = config["departments"].setdefault(department_id, {"name": "Кафедра", "rooms": []})
     if room and room not in dept["rooms"]:
         dept["rooms"].append(room)
@@ -216,3 +218,75 @@ def break_rows(schedule: dict[int, list[dict]], days: list[int]) -> set[int]:
 def _to_minutes(hhmm: str) -> int:
     h, m = hhmm.split(":")
     return int(h) * 60 + int(m)
+
+
+def room_sort_key(r: str):
+    return (not r.isdigit(), int(r) if r.isdigit() else 0, r)
+
+
+def department_rooms(registry_rooms: list[str] | None) -> list[str]:
+    """Кабинеты кафедры для обзора «свободные кабинеты» — ТОЛЬКО те, что методист
+    добавил во вкладке «Кабинеты». В колледже много аудиторий (общие классы для пар,
+    кабинеты других кафедр), и «кабинеты кафедры» программа угадать не может: у
+    фортепиано это один этаж, у вокалистов другие. Список хранится в config/ и
+    переживает и обновление программы, и удаление проверок."""
+    rooms = {normalize_room(r) for r in (registry_rooms or [])}
+    return sorted((r for r in rooms if r), key=room_sort_key)
+
+
+def group_rooms_by_floor(rooms: list[str]) -> list[tuple[str, list[str]]]:
+    """Для быстрого выбора кабинетов пачкой: '417' -> этаж 4 (первая цифра трёхзначного
+    номера); всё остальное (м/ф, с/з, '4.27') — в «Прочие»."""
+    floors: dict[str, list[str]] = {}
+    for r in sorted(rooms, key=room_sort_key):
+        key = f"{r[0]} этаж" if r.isdigit() and len(r) == 3 else "Прочие"
+        floors.setdefault(key, []).append(r)
+    return sorted(floors.items(), key=lambda kv: (kv[0] == "Прочие", kv[0]))
+
+
+def _short_name(l: Lesson) -> str:
+    name = l.teacher_name or l.accompanist_name or l.subject or "—"
+    return strip_academic_title(name)
+
+
+def free_rooms_day(
+    lessons: list[Lesson], day: int, rooms: list[str], special_slots: list[dict] | None = None
+) -> dict:
+    """Обзор одного дня: строки — кабинеты, столбцы — слоты сетки ЭТОГО дня, в
+    ячейке — кто занимает кабинет (или «свободно»). Заголовок слота показывает,
+    сколько кабинетов в нём свободно — чтобы быстро найти, куда переставить занятие.
+
+    state ячейки: "free" | "busy" | "clash" (в кабинете одновременно двое) | "special"
+    (кураторский час и т.п.). busy/clash несут "who" — фамилии, видимые прямо в ячейке."""
+    grids = timegrid.build_day_grids(lessons)
+    grid = grids.get(day)
+    starts = list(grid.slots) if grid else []
+    specials = {}
+    for sp in special_slots or []:
+        m = _to_minutes(sp["start"])
+        if sp["day"] == day and m not in starts:
+            specials[m] = sp["subject"].capitalize()
+    starts = sorted(starts + list(specials))
+
+    by_room: dict[str, list[Lesson]] = {}
+    for l in lessons:
+        if l.day_of_week == day and l.room_normalized in rooms:
+            by_room.setdefault(l.room_normalized, []).append(l)
+
+    slots = [{"start": timegrid.fmt_minutes(s), "special": specials.get(s), "free": 0, "total": len(rooms)} for s in starts]
+    rows = []
+    for room in rooms:
+        cells = []
+        for i, start in enumerate(starts):
+            if start in specials:
+                cells.append({"state": "special", "who": []})
+                continue
+            end = start + INDIVIDUAL_LESSON_MINUTES
+            here = [l for l in by_room.get(room, []) if _overlaps(start, end, l.start_minutes, l.end_minutes)]
+            if not here:
+                cells.append({"state": "free", "who": []})
+                slots[i]["free"] += 1
+            else:
+                cells.append({"state": "clash" if len(here) > 1 else "busy", "who": [_short_name(l) for l in here]})
+        rows.append({"room": room, "cells": cells})
+    return {"slots": slots, "rows": rows, "day": day}

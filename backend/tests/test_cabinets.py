@@ -118,3 +118,65 @@ def test_grid_rows_pads_shorter_days_with_none(make_lesson):
     rows = cabinets.grid_rows(schedule, [0, 1])
 
     assert len(rows) == 2 and rows[1][1] is None
+
+
+def _full_day(make_lesson, day=1):
+    """Достаточно занятий, чтобы сетка дня считалась надёжной (20+, слоты по 3+ раза)."""
+    out = []
+    for t in ["08:30", "09:20", "10:15"]:
+        for k in range(8):
+            out.append(make_lesson(day=day, start=t, teacher=f"П{k}", student=f"С{t}{k}", room=f"1{k}"))
+    return out
+
+
+def test_department_rooms_are_only_the_registry_rooms_normalized(make_lesson):
+    """Кабинеты кафедры — только то, что методист добавил; остальные аудитории колледжа не угадываем."""
+    assert cabinets.department_rooms(["202", " 101 ", "ауд. 417", "418.0", "", "101"]) == ["101", "202", "417", "418"]
+    assert cabinets.department_rooms([]) == [] and cabinets.department_rooms(None) == []
+
+
+def test_add_room_stores_normalized_form():
+    config = cabinets.load_config("/нет/такого/файла.json")
+    cabinets.add_room(config, " ауд. 417 ")
+    cabinets.add_room(config, "417.0")  # то же самое — не дублируется
+    assert cabinets.get_rooms(config) == ["417"]
+
+
+def test_group_rooms_by_floor():
+    groups = cabinets.group_rooms_by_floor(["421", "417", "305", "м/ф", "4.27", "418"])
+    assert groups == [("3 этаж", ["305"]), ("4 этаж", ["417", "418", "421"]), ("Прочие", ["4.27", "м/ф"])]
+
+
+def test_free_rooms_day_marks_busy_free_and_counts(make_lesson):
+    lessons = _full_day(make_lesson)
+    rooms = cabinets.department_rooms([f"1{k}" for k in range(8)])  # кабинеты 10..17
+
+    view = cabinets.free_rooms_day(lessons, 1, rooms)
+
+    assert [s["start"] for s in view["slots"]] == ["08:30", "09:20", "10:15"]
+    assert all(s["free"] == 0 for s in view["slots"])  # в каждом слоте заняты все 8 кабинетов
+    assert view["rows"][0]["cells"][0]["state"] == "busy" and view["rows"][0]["cells"][0]["who"] == ["П0"]
+
+    extra = cabinets.free_rooms_day(lessons, 1, rooms + ["999"])
+    assert all(s["free"] == 1 for s in extra["slots"])
+    assert extra["rows"][-1]["cells"][0] == {"state": "free", "who": []}
+
+
+def test_free_rooms_day_group_lesson_blocks_two_slots_and_clash_is_shown(make_lesson):
+    lessons = _full_day(make_lesson)
+    lessons.append(make_lesson(day=1, start="08:30", teacher="Группа Г.Г.", room="10",
+                               lesson_type=LessonType.GROUP, duration=90, student=None))
+    view = cabinets.free_rooms_day(lessons, 1, ["10"])
+
+    cells = view["rows"][0]["cells"]
+    assert cells[0]["state"] == "clash" and cells[1]["state"] == "clash"  # пара 08:30–10:00 перекрывает два слота
+    assert cells[2]["state"] == "busy"
+
+
+def test_free_rooms_day_curator_hour_is_special(make_lesson):
+    lessons = _full_day(make_lesson)
+    view = cabinets.free_rooms_day(lessons, 1, ["10"], [{"day": 1, "start": "14:25", "subject": "КУРАТОРСКИЙ ЧАС"}])
+
+    assert [s["start"] for s in view["slots"]][-1] == "14:25"
+    assert view["slots"][-1]["special"] == "Кураторский час"
+    assert view["rows"][0]["cells"][-1]["state"] == "special"

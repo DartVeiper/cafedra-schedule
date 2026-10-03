@@ -69,11 +69,12 @@ a:hover { text-decoration: underline; }
 .topbar-inner {
   max-width: 1240px;
   margin: 0 auto;
-  padding: 0 24px;
-  height: 56px;
+  padding: 6px 24px;
+  min-height: 56px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 28px;
+  gap: 4px 24px;
 }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); font-size: 1.02rem; }
 .brand:hover { text-decoration: none; }
@@ -83,7 +84,7 @@ a:hover { text-decoration: underline; }
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 0.95rem;
 }
-.topnav { display: flex; gap: 4px; }
+.topnav { display: flex; flex-wrap: wrap; gap: 4px; }
 .topnav a {
   padding: 6px 12px; border-radius: 8px; color: var(--muted); font-weight: 500; font-size: 0.92rem;
 }
@@ -485,3 +486,72 @@ dialog.whatsnew[open] { display: flex; flex-direction: column; }
 .wn-tag { font-size: 0.7rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
 .wn-tag-now { background: var(--ok-soft); color: var(--ok); border: 1px solid var(--ok-line); }
 .wn-tag-dev { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-line); }
+
+/* ---------- Сравнение с прошлой проверкой ---------- */
+.compare { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; margin: 0 0 20px; box-shadow: var(--shadow); }
+.compare-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 0.92rem; }
+.compare-form { display: inline; margin: 0; }
+.compare-form select { font: inherit; font-size: 0.84rem; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; max-width: 280px; }
+.compare-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 8px; font-size: 0.95rem; }
+.cmp-fixed b { color: var(--ok); }
+.cmp-new b { color: var(--danger); }
+.cmp-same { color: var(--muted); }
+.compare-note { margin-top: 8px; font-size: 0.84rem; color: var(--warn); }
+.compare-fixed { margin-top: 10px; }
+.badge-new { background: var(--accent); }
+@media (prefers-color-scheme: dark) { .badge-new { color: #1b1f2a; } }
+
+/* ---------- Свободные кабинеты ---------- */
+.fr-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 10px; font-size: 0.85rem; color: var(--muted); }
+.fr-grid th, .fr-grid td { white-space: nowrap; }
+.fr-room-h, .fr-room { position: sticky; left: 0; z-index: 2; background: var(--surface-2); text-align: left; }
+.fr-room a { font-weight: 700; }
+.fr-slot-h { font-variant-numeric: tabular-nums; }
+.fr-count { font-size: 0.7rem; font-weight: 600; color: var(--ok); }
+.fr-count-zero { color: var(--danger); }
+.fr-cell { min-width: 112px; font-size: 0.8rem; padding: 6px 10px; border: 1px solid var(--line); }
+.fr-free { background: var(--ok-soft); color: var(--ok); }
+.fr-busy { background: var(--accent-soft); }
+.fr-clash { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
+.legend-swatch.fr-free { background: var(--ok-soft); }
+.legend-swatch.fr-busy { background: var(--accent-soft); }
+.legend-swatch.fr-clash { background: var(--danger-soft); }
+
+/* ---------- Листы преподавателям ---------- */
+.teachers-table .num { text-align: center; font-weight: 700; width: 90px; }
+.teachers-table .acts { white-space: nowrap; text-align: right; }
+.sheet { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 26px; margin-bottom: 22px; box-shadow: var(--shadow); }
+.sheet h1 { font-size: 1.35rem; }
+.sheet-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 0.93rem; }
+.sheet-table th { text-align: left; background: var(--surface-2); padding: 8px 12px; border: 1px solid var(--line); }
+.sheet-table td { padding: 10px 12px; border: 1px solid var(--line); vertical-align: top; }
+.sheet-when { white-space: nowrap; width: 130px; }
+.sheet-kind { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
+.sheet-table tr.review-row td { background: var(--warn-soft); }
+@media print {
+  .no-print { display: none !important; }
+  .sheet { box-shadow: none; border: none; padding: 0; margin: 0; break-after: page; }
+  .sheet:last-child { break-after: auto; }
+  .sheet-table tr { break-inside: avoid; }
+}
+
+/* ---------- Нагрузка ---------- */
+.load-table td, .load-table th { text-align: left; white-space: normal; vertical-align: top; padding: 8px 12px; border: 1px solid var(--line); }
+.num-input { font: inherit; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+
+/* ---------- Резервная копия ---------- */
+.backup-box { margin-top: 36px; border-top: 1px dashed var(--line); padding-top: 4px; }
+.backup-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0 6px; }
+.backup-restore { margin: 0; }
+.backup-restore label.btn { cursor: pointer; }
+
+/* ---------- Выбор кабинетов кафедры ---------- */
+.setup-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 22px; max-width: 760px; box-shadow: var(--shadow); }
+.setup-card p { color: var(--muted); }
+.floors-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+.floor-group { border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px 12px; background: var(--surface); margin: 0; }
+.floor-group legend { font-weight: 700; padding: 0 6px; }
+.floor-all { font-weight: 400; font-size: 0.82rem; color: var(--accent); margin-left: 10px; cursor: pointer; }
+.floor-rooms { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.room-pick { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); cursor: pointer; font-variant-numeric: tabular-nums; }
+.room-pick:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); }

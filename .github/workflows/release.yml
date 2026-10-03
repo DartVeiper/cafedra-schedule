@@ -1,0 +1,55 @@
+name: Выпуск релиза
+
+# Чтобы выпустить версию: поднимите APP_VERSION в backend/app/version.py, добавьте запись в
+# backend/app/changelog.py, запушьте в main и создайте тег:  git tag v0.3.5 && git push origin v0.3.5
+# Дальше GitHub сам прогонит тесты, соберёт .exe, проверит, что он запускается, и опубликует релиз
+# с текстом из changelog.py. Если релиз с этим тегом уже создан вручную — просто приложит к нему .exe.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Установка зависимостей
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Тег совпадает с версией, запись в changelog есть — готовим текст релиза
+        working-directory: backend
+        shell: bash
+        run: python scripts/release_notes.py "$TAG" > ../release_notes.md
+
+      - name: Тесты (включая сквозной тест самообновления)
+        working-directory: backend
+        run: python -m pytest tests -v
+
+      - name: Сборка .exe
+        working-directory: backend
+        run: python -m PyInstaller --noconfirm --name CafedraSchedule --onefile --add-data "app/templates;app/templates" --add-data "app/static;app/static" desktop_app.py
+
+      - name: Проверка, что собранный .exe запускается
+        working-directory: backend
+        run: python scripts/smoke_exe.py dist/CafedraSchedule.exe
+
+      - name: Публикация релиза
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" backend/dist/CafedraSchedule.exe --clobber
+          else
+            gh release create "$TAG" backend/dist/CafedraSchedule.exe --title "$TAG" --notes-file release_notes.md --verify-tag
+          fi

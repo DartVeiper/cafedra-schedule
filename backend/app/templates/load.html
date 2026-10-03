@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% set nav = 'load' %}
+{% block title %}Нагрузка и окна · Проверка расписания{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Нагрузка и окна студентов</h1>
+    <p class="lead">Это <b>не накладки</b>, а подсказки: расписание формально без конфликтов, но неудобное для студента.
+      Окном считается пауза между занятиями, рядом с которой есть индивидуальное; пары группы тоже считаются занятиями.</p>
+  </div>
+</div>
+
+<form method="get" action="/report/{{ import_id }}/load" class="filterbar-card" style="margin-bottom:16px">
+  {% if day is not none %}<input type="hidden" name="day" value="{{ day }}">{% endif %}
+  <div class="filter-row">
+    <label class="filter-field">Предупреждать от
+      <input type="number" name="max_lessons" value="{{ max_lessons }}" min="2" max="20" style="width:64px" class="num-input"> индивидуальных занятий в день</label>
+    <label class="filter-field">и окон от
+      <input type="number" name="window_hours" value="{{ window_hours }}" min="1" max="12" step="0.5" style="width:64px" class="num-input"> ч</label>
+    <button type="submit" class="btn-ghost">Применить</button>
+  </div>
+  <div class="filter-row">
+    <span class="filter-label">День</span>
+    <div class="chips">
+      <a class="chip {{ 'active' if day is none else '' }}" href="/report/{{ import_id }}/load?max_lessons={{ max_lessons }}&window_hours={{ window_hours }}">Все <span class="n">{{ day_total }}</span></a>
+      {% for d in range(6) %}{% if day_counts[d] %}
+      <a class="chip {{ 'active' if day == d else '' }}" href="/report/{{ import_id }}/load?max_lessons={{ max_lessons }}&window_hours={{ window_hours }}&day={{ d }}">{{ day_short[d] }} <span class="n">{{ day_counts[d] }}</span></a>
+      {% endif %}{% endfor %}
+    </div>
+  </div>
+</form>
+
+<h2>Много занятий в один день <span class="count">({{ many|length }})</span></h2>
+{% if many %}
+<div class="grid-wrap"><table class="cabinet-grid load-table">
+  <thead><tr><th>Студент</th><th>Группа</th><th>День</th><th>Что именно</th><th>Преподаватели</th></tr></thead>
+  <tbody>{% for i in many %}
+  <tr><td><b>{{ i.student }}</b></td><td>{{ i.group }}</td><td>{{ day_names[i.day] }}</td><td>{{ i.text }}</td><td>{{ i.teachers|join(', ') }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% else %}<p class="wn-muted">Таких случаев нет при выбранных порогах.</p>{% endif %}
+
+<h2>Окна между занятиями <span class="count">({{ windows|length }})</span></h2>
+{% if windows %}
+<div class="grid-wrap"><table class="cabinet-grid load-table">
+  <thead><tr><th>Студент</th><th>Группа</th><th>День</th><th>Окно</th><th>Преподаватели</th></tr></thead>
+  <tbody>{% for i in windows %}
+  <tr><td><b>{{ i.student }}</b></td><td>{{ i.group }}</td><td>{{ day_names[i.day] }}</td><td>{{ i.text }}</td><td>{{ i.teachers|join(', ') }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% else %}<p class="wn-muted">Таких случаев нет при выбранных порогах.</p>{% endif %}
+{% endblock %}

@@ -15,6 +15,9 @@
       {% if import_id %}
       <a href="/report/{{ import_id }}" class="{{ 'active' if nav == 'report' else '' }}">Отчёт</a>
       <a href="/report/{{ import_id }}/cabinets" class="{{ 'active' if nav == 'cabinets' else '' }}">Кабинеты</a>
+      {% if has_department_rooms() %}<a href="/report/{{ import_id }}/free-rooms" class="{{ 'active' if nav == 'free' else '' }}">Свободные кабинеты</a>{% endif %}
+      <a href="/report/{{ import_id }}/load" class="{{ 'active' if nav == 'load' else '' }}">Нагрузка</a>
+      <a href="/report/{{ import_id }}/teachers" class="{{ 'active' if nav == 'teachers' else '' }}">Преподавателям</a>
       {% endif %}
     </nav>
     {% set upd = update_info if update_info is defined else cached_update() %}

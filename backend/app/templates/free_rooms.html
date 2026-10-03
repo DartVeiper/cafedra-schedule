@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% set nav = 'free' %}
+{% block title %}Свободные кабинеты · Проверка расписания{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Свободные кабинеты</h1>
+    <p class="lead">Кто в каком кабинете в выбранный день. Зелёные ячейки — свободно: сюда можно переставить занятие.
+      В заголовке слота — сколько кабинетов свободно в это время.</p>
+  </div>
+</div>
+
+<div class="chips" style="margin-bottom:14px">
+  {% for d in days %}
+  <a class="chip {{ 'active' if d == day else '' }}" href="/report/{{ import_id }}/free-rooms?day={{ d }}">{{ day_names[d] }}</a>
+  {% endfor %}
+</div>
+
+{% if not has_rooms %}
+<div class="setup-card">
+  <h2 style="margin-top:0">Сначала укажите кабинеты вашей кафедры</h2>
+  <p>В колледже много аудиторий: общие классы для пар, кабинеты других кафедр. Программа не может угадать, какие из них ваши,
+    поэтому здесь показываются только кабинеты из списка кафедры. Обычно это кабинеты одного-двух этажей, где работает кафедра.
+    Список вносится один раз и дальше сохраняется — при обновлении программы и при новых проверках он остаётся.</p>
+  <a class="btn" href="/report/{{ import_id }}/cabinets">Выбрать кабинеты кафедры</a>
+</div>
+{% elif not view.slots %}
+<p>В этой проверке нет данных для сетки — не найдено индивидуальных занятий.</p>
+{% else %}
+<p class="wn-muted">Показаны кабинеты вашей кафедры: {{ room_count }}. <a href="/report/{{ import_id }}/cabinets">Изменить список</a></p>
+<div class="fr-legend">
+  <span class="legend-item"><span class="legend-swatch fr-free"></span>свободно</span>
+  <span class="legend-item"><span class="legend-swatch fr-busy"></span>занято (фамилия в ячейке)</span>
+  <span class="legend-item"><span class="legend-swatch fr-clash"></span>накладка: двое сразу</span>
+  <span class="legend-item"><span class="legend-swatch cell-special"></span>кураторский час и т.п.</span>
+</div>
+<div class="grid-wrap">
+  <table class="cabinet-grid fr-grid">
+    <thead>
+      <tr>
+        <th class="fr-room-h">Кабинет</th>
+        {% for s in view.slots %}
+        <th class="fr-slot-h">{{ s.start }}
+          {% if s.special %}<div class="day-note">{{ s.special }}</div>
+          {% else %}<div class="fr-count {{ 'fr-count-zero' if s.free == 0 else '' }}">свободно {{ s.free }} из {{ s.total }}</div>{% endif %}
+        </th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in view.rows %}
+      <tr>
+        <th class="fr-room"><a href="/report/{{ import_id }}/cabinets/{{ row.room|urlencode }}">{{ row.room }}</a></th>
+        {% for cell in row.cells %}
+          {% if cell.state == 'free' %}<td class="fr-cell fr-free">свободно</td>
+          {% elif cell.state == 'special' %}<td class="fr-cell cell-special">—</td>
+          {% elif cell.state == 'clash' %}<td class="fr-cell fr-clash">⚠ {{ cell.who|join(' × ') }}</td>
+          {% else %}<td class="fr-cell fr-busy">{{ cell.who|join(', ') }}</td>{% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

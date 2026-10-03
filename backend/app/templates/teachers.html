@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% set nav = 'teachers' %}
+{% block title %}Листы преподавателям · Проверка расписания{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Листы преподавателям</h1>
+    <p class="lead">Для каждого преподавателя и концертмейстера — отдельный лист «ваши накладки» понятными фразами.
+      Можно распечатать (или сохранить в PDF из окна печати) либо скачать в Word и отправить.</p>
+  </div>
+  <div class="page-actions">
+    {% if with_issues %}<a class="btn" href="/report/{{ import_id }}/teachers/print" target="_blank">🖨 Все листы одним файлом ({{ with_issues|length }})</a>{% endif %}
+  </div>
+</div>
+
+{% if with_issues %}
+<div class="grid-wrap teachers-table">
+<table class="cabinet-grid">
+  <thead><tr><th style="text-align:left">Преподаватель / концертмейстер</th><th>Явных</th><th>Проверить</th><th></th></tr></thead>
+  <tbody>
+  {% for s in with_issues %}
+  <tr>
+    <td><b>{{ s.name }}</b></td>
+    <td class="num cmp-new">{{ s.certain_count or '' }}</td>
+    <td class="num">{{ s.review_count or '' }}</td>
+    <td class="acts">
+      <a href="/report/{{ import_id }}/teacher?name={{ s.name|urlencode }}" target="_blank">Лист</a> ·
+      <a href="/report/{{ import_id }}/teacher.docx?name={{ s.name|urlencode }}">Word</a>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="all-clear-banner">Накладок не найдено ни у кого — листы не нужны.</div>
+{% endif %}
+
+{% if clean %}
+<details class="info" style="margin-top:16px">
+  <summary>Без накладок ({{ clean|length }})</summary>
+  <ul>{% for n in clean %}<li>{{ n }} — <a href="/report/{{ import_id }}/teacher?name={{ n|urlencode }}" target="_blank">лист</a></li>{% endfor %}</ul>
+</details>
+{% endif %}
+{% endblock %}

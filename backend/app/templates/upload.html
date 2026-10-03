@@ -155,5 +155,22 @@
 </ul>
 {% endif %}
 
+<section id="backup" class="backup-box">
+  <h2>Резервная копия настроек</h2>
+  <p class="lead">Список кабинетов и пометки «это не накладка» хранятся на этом компьютере. Сохраните копию — например,
+    на флешку или в облако — чтобы не потерять их при переустановке Windows или переходе на другой компьютер.
+    Сами проверки в копию не входят: их всегда можно получить заново, загрузив файлы расписания.</p>
+  {% if backup_msg %}<div class="{{ 'all-clear-banner' if backup_ok else 'failed-files-banner' }}" style="margin:10px 0">{{ backup_msg }}</div>{% endif %}
+  <div class="backup-actions">
+    <a class="btn btn-secondary" href="/backup/download">⬇ Сохранить копию настроек</a>
+    <form action="/backup/restore" method="post" enctype="multipart/form-data" class="backup-restore">
+      <label class="btn btn-secondary">⬆ Восстановить из копии…
+        <input type="file" name="file" accept=".json,application/json" hidden onchange="this.form.submit()">
+      </label>
+    </form>
+  </div>
+  <p class="wn-muted">Восстановление только добавляет данные из копии к текущим — ничего не удаляет и не заменяет.</p>
+</section>
+
 <p class="version-footer">версия {{ app_version }}</p>
 {% endblock %}

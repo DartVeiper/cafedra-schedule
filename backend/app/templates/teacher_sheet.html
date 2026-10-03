@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% set nav = 'teachers' %}
+{% block title %}{% if single %}Лист: {{ sheets[0].name }}{% else %}Листы преподавателям{% endif %} · Проверка расписания{% endblock %}
+{% block content %}
+<div class="page-actions no-print" style="margin-bottom:16px">
+  <a class="btn btn-secondary" href="/report/{{ import_id }}/teachers">&larr; К списку</a>
+  <button type="button" onclick="window.print()">🖨 Печать / сохранить в PDF</button>
+  {% if single %}<a class="btn btn-secondary" href="/report/{{ import_id }}/teacher.docx?name={{ sheets[0].name|urlencode }}">⬇ Word</a>{% endif %}
+</div>
+
+{% for s in sheets %}
+<section class="sheet">
+  <h1>Накладки в расписании: {{ s.name }}</h1>
+  <p class="lead">Составлено {{ created }}. Найдено: <b>{{ s.certain_count }}</b> явных, <b>{{ s.review_count }}</b> требуют вашей проверки.
+    Пожалуйста, исправьте у себя в файле расписания или сообщите методисту, как лучше сделать.</p>
+  {% if not s.items %}
+  <div class="all-clear-banner">Накладок не найдено — всё в порядке.</div>
+  {% else %}
+  <table class="sheet-table">
+    <thead><tr><th>День и время</th><th>Что не так</th></tr></thead>
+    <tbody>
+    {% for it in s.items %}
+    <tr class="{{ 'review-row' if not it.certain else '' }}">
+      <td class="sheet-when"><b>{{ day_names[it.day] }}</b><br>{{ it.when }}</td>
+      <td>
+        <div class="sheet-kind">{{ it.kind }}{% if not it.certain %} <span class="badge">ПРОВЕРИТЬ</span>{% endif %}</div>
+        {{ it.text }}
+        {% if it.note %}<div class="conflict-note">{{ it.note }}</div>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

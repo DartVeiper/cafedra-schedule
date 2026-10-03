@@ -4,8 +4,9 @@
 {% block content %}
   <h1>Кабинеты</h1>
   <p class="lead">
-    Список кабинетов кафедры — общий, не привязан к этой конкретной проверке
-    и не удаляется вместе с ней.
+    Укажите кабинеты <b>вашей кафедры</b> — именно они показываются на странице «Свободные кабинеты».
+    Список общий для всех проверок, хранится на этом компьютере и не сбрасывается ни при загрузке новых
+    файлов, ни при обновлении программы (а резервную копию можно сделать на главной странице).
   </p>
 
   <h2>Список кабинетов <span class="count">({{ rooms|length }})</span></h2>
@@ -33,17 +34,29 @@
   </form>
 
   {% if suggested_rooms %}
-  <h2>Встретились в этой проверке, но их нет в списке</h2>
-  <ul class="cabinets-list">
-    {% for room in suggested_rooms %}
-    <li>
-      <span>{{ room }}</span>
-      <form method="post" action="/report/{{ import_id }}/cabinets/add" class="delete-import-form">
-        <input type="hidden" name="room" value="{{ room }}">
-        <button type="submit" class="add-link">Добавить в список</button>
-      </form>
-    </li>
+  <h2>Кабинеты из этой проверки, которых нет в списке <span class="count">({{ suggested_rooms|length }})</span></h2>
+  <p class="lead">Отметьте те, что относятся к вашей кафедре (удобно целым этажом), и нажмите «Добавить выбранные».</p>
+  <form method="post" action="/report/{{ import_id }}/cabinets/add-many" class="floors-form">
+    {% for floor, floor_rooms in suggested_floors %}
+    <fieldset class="floor-group">
+      <legend>{{ floor }}
+        <label class="floor-all"><input type="checkbox" class="floor-toggle"> весь этаж</label>
+      </legend>
+      <div class="floor-rooms">
+        {% for room in floor_rooms %}
+        <label class="room-pick"><input type="checkbox" name="rooms" value="{{ room }}"> {{ room }}</label>
+        {% endfor %}
+      </div>
+    </fieldset>
     {% endfor %}
-  </ul>
+    <button type="submit">Добавить выбранные</button>
+  </form>
+  <script>
+    document.querySelectorAll('.floor-toggle').forEach(function (t) {
+      t.addEventListener('change', function () {
+        t.closest('fieldset').querySelectorAll('input[name=rooms]').forEach(function (c) { c.checked = t.checked; });
+      });
+    });
+  </script>
   {% endif %}
 {% endblock %}

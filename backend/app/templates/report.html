@@ -38,6 +38,7 @@
     {{ lesson_card(c.lesson_b) }}
   </div>
   <div class="conflict-side">
+    {% if key in new_keys %}<span class="badge badge-new">НОВАЯ</span>{% endif %}
     {% if not c.is_certain %}<span class="badge">ПРОВЕРИТЬ</span>{% endif %}
     {% if is_pairing and not dismissed %}<span class="pairing-ok">{{ 'Нужно сверить' if not c.is_certain else 'Обычная пара' }}</span>{% endif %}
     {% if c.note %}<div class="conflict-note">{{ c.note }}</div>{% endif %}
@@ -71,6 +72,7 @@
     <p class="lead">{{ lesson_count }} занятий: {{ individual_count }} индивидуальных и {{ group_count }} групповых</p>
   </div>
   <div class="page-actions">
+    <a class="btn btn-secondary" href="/report/{{ import_id }}/teachers">Листы преподавателям</a>
     <a class="btn btn-secondary" href="/report/{{ import_id }}/export.xlsx{{ export_qs }}">⬇ Excel</a>
     <a class="btn btn-secondary" href="/report/{{ import_id }}/export.docx{{ export_qs }}">⬇ Word</a>
     <form method="post" action="/report/{{ import_id }}/delete" class="delete-import-form"
@@ -107,6 +109,54 @@
     {% endif %}
   </div>
 </div>
+
+{# ---------- Сравнение с прошлой проверкой ---------- #}
+{% if cmp or compare_options %}
+<section class="compare" aria-label="Сравнение с прошлой проверкой">
+  {% if cmp %}
+  <div class="compare-head">
+    Сравнение с проверкой от <b>{{ cmp_label }}</b>
+    <form method="get" action="/report/{{ import_id }}" class="compare-form">
+      {% for k, v in f.as_params(compare='', changes='').items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+      <select name="compare" onchange="this.form.submit()" aria-label="С чем сравнивать">
+        <option value="" {% if not f.compare %}selected{% endif %}>с предыдущей</option>
+        {% for oid, olabel in compare_options %}<option value="{{ oid }}" {% if f.compare == oid %}selected{% endif %}>с {{ olabel }}</option>{% endfor %}
+        <option value="off">не сравнивать</option>
+      </select>
+    </form>
+  </div>
+  <div class="compare-stats">
+    <span class="cmp-fixed">✓ исправлено <b>{{ cmp.fixed_count }}</b></span>
+    <span class="cmp-new">⚠ новых <b>{{ cmp.new_count }}</b></span>
+    <span class="cmp-same">без изменений <b>{{ cmp.same }}</b></span>
+    {% if cmp.new_count %}
+      {% if only_new %}<a class="chip active" href="{{ link(changes='') }}">Показаны только новые · показать все</a>
+      {% else %}<a class="chip" href="{{ link(changes='new') }}">Показать только новые</a>{% endif %}
+    {% endif %}
+  </div>
+  {% if cmp.lessons_differ_a_lot %}
+  <div class="compare-note">Занятий было {{ cmp.prev_lessons }}, стало {{ cmp.cur_lessons }} — набор файлов заметно отличается, поэтому «исправлено» может означать «этих файлов сейчас нет».</div>
+  {% endif %}
+  {% if cmp_fixed %}
+  <details class="info compare-fixed">
+    <summary>Что исправлено ({{ cmp_fixed|length }})</summary>
+    <ul>
+      {% for x in cmp_fixed %}<li><b>{{ x.day }} {{ x.when }}</b> · {{ x.a }} × {{ x.b }}{% if x.room %} · ауд. {{ x.room }}{% endif %} <span class="att-hint">({{ x.kind }})</span></li>{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+  {% else %}
+  <div class="compare-head">Это первая проверка — сравнивать пока не с чем. После повторной загрузки исправленных файлов здесь появится, что исправлено и что появилось нового.
+    <form method="get" action="/report/{{ import_id }}" class="compare-form">
+      <select name="compare" onchange="this.form.submit()" aria-label="С чем сравнивать">
+        <option value="off">выберите проверку для сравнения…</option>
+        {% for oid, olabel in compare_options %}<option value="{{ oid }}">с {{ olabel }}</option>{% endfor %}
+      </select>
+    </form>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
 
 {# ---------- Что стоит проверить в исходных файлах ---------- #}
 {% set parse_warnings = notes.parse_warnings or [] %}

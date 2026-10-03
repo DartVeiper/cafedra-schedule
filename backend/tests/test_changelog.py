@@ -65,3 +65,31 @@ def test_update_banner_shows_release_notes_and_dialog_has_them(monkeypatch):
     assert "v9.9.9" in page and "новая <b>кнопка</b>" in page
     assert 'action="/update/apply"' in page and "Скачать и установить" in page
     assert 'id="wn-update"' in page  # то же описание — в окне «Что нового»
+
+
+def test_release_notes_are_rendered_from_the_changelog_entry():
+    text = changelog.release_notes_markdown("v0.3.0")
+
+    assert text.startswith("Что нового с v0.2.0:")
+    assert "- Фильтры отчёта по дню недели и по кабинету." in text
+    assert "\nИсправлено:\n" in text and "- Опечатка в фамилии студента" in text
+    assert "«Скачать и установить»" in text and "CafedraSchedule.exe" in text   # подвал: как обновиться / установить
+
+
+def test_release_notes_for_unknown_version_is_an_error():
+    import pytest
+    with pytest.raises(KeyError):
+        changelog.release_notes_markdown("v9.9.9")
+
+
+def test_release_script_checks_tag_against_version(monkeypatch):
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(__file__).resolve().parents[1] / "scripts" / "release_notes.py"
+
+    ok = subprocess.run([sys.executable, str(script), f"v{APP_VERSION}"], capture_output=True, encoding="utf-8")
+    assert ok.returncode == 0 and ok.stdout.startswith("Что нового")
+
+    bad = subprocess.run([sys.executable, str(script), "v9.9.9"], capture_output=True, encoding="utf-8")
+    assert bad.returncode == 1 and "не совпадает с APP_VERSION" in bad.stderr

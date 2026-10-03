@@ -129,3 +129,39 @@ def test_report_and_cabinet_pages_show_irregular_time(tmp_path, monkeypatch, mak
     assert "Нестандартное время начала: 1" in report and "10:22" in report and "ближайшее по сетке — 10:15" in report
     assert "нестандартное время" in page and "cell-irregular" in page
     assert listing  # страница списка рендерится без ошибок
+
+
+
+def test_free_rooms_page_shows_only_department_rooms_and_tab_hidden_until_set(tmp_path, monkeypatch, make_lesson):
+    """Вкладка «Свободные кабинеты» и сама страница работают только по списку кабинетов кафедры."""
+    from app import cabinets
+    lessons = []
+    for t in ["08:30", "09:20", "10:15"]:
+        for k in range(8):
+            lessons.append(make_lesson(day=1, start=t, teacher=f"П{k}", student=f"С{t}{k}", room=f"4{k}"))
+    db_path = tmp_path / "t.sqlite3"
+    conn = db.get_connection(str(db_path))
+    db.save_import(conn, "imp", lessons, {})
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(main_module, "DB_PATH", str(db_path))
+    client = TestClient(main_module.app)
+
+    # список пуст: вкладки в меню нет, а страница просит указать кабинеты
+    report_page = client.get("/report/imp").text
+    assert "/free-rooms" not in report_page
+    page = client.get("/report/imp/free-rooms?day=1").text
+    assert "Сначала укажите кабинеты вашей кафедры" in page and "fr-grid" not in page
+
+    # выбрали 2 кабинета пачкой (форма с этажами) — они и только они в таблице, вкладка появилась
+    resp = client.post("/report/imp/cabinets/add-many", data={"rooms": ["40", "41"]}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert cabinets.get_rooms(cabinets.load_config(main_module.CABINETS_PATH)) == ["40", "41"]
+    assert "/free-rooms" in client.get("/report/imp").text
+    page = client.get("/report/imp/free-rooms?day=1").text
+    assert "Показаны кабинеты вашей кафедры: 2" in page
+    assert page.count('class="fr-room"') == 2 and ">40</a>" in page and ">47</a>" not in page
+
+    # страница выбора показывает кабинеты из проверки, сгруппированные по этажам (чекбоксы)
+    picker = client.get("/report/imp/cabinets").text
+    assert 'name="rooms"' in picker and "весь этаж" in picker
