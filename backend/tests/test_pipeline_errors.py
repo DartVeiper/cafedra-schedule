@@ -71,5 +71,10 @@ def test_corrupt_legacy_doc_is_skipped_not_crashed(tmp_path):
     lessons, warnings, failed = load_group_lessons(str(group_dir), str(cache_dir))
 
     assert lessons == []
-    assert not failed  # не "падение", а штатное предупреждение ниже
-    assert any("не найдена таблица расписания" in w.label().lower() for w in warnings)
+    if failed:
+        # Нет ни MS Word, ни LibreOffice (например, GitHub Actions): .doc нечем открыть, и файл
+        # честно попадает в «не удалось прочитать». Главное — импорт при этом не падает.
+        assert len(failed) == 1 and "broken.doc" in failed[0]
+    else:
+        # Word/LibreOffice есть и «открыл» файл — дальше предупреждение парсера, а не падение.
+        assert any("не найдена таблица расписания" in w.label().lower() for w in warnings)
