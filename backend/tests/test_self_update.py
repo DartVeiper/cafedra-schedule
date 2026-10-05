@@ -105,3 +105,20 @@ def test_helper_script_keeps_backup_and_retries_swap():
     assert r'move /y "C:\A\a.exe.bak" "C:\A\a.exe"' in script
     # подмена повторяется, а не падает с первой попытки (файл бывает занят после выхода процесса)
     assert ":retry" in script and f"GEQ {self_update.MAX_SWAP_TRIES}" in script
+
+
+def test_independent_launch_env_drops_pyinstaller_service_vars(monkeypatch):
+    """Новая копия, запущенная из работающей onefile-программы, не должна унаследовать
+    служебные переменные PyInstaller — иначе она считает себя дочерним процессом старой
+    и падает при старте (поймано сквозным тестом на настоящей собранной программе)."""
+    monkeypatch.setenv("_MEIPASS2", r"C:\Temp\_MEI123")
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", r"C:\Temp\_MEI123")
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+    monkeypatch.setenv("CAFEDRA_KEEP_ME", "yes")
+
+    env = self_update.independent_launch_env()
+
+    assert "_MEIPASS2" not in env
+    assert not [k for k in env if k.startswith("_PYI_")]
+    assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert env["CAFEDRA_KEEP_ME"] == "yes"  # остальное окружение (PATH, SystemRoot...) сохраняется

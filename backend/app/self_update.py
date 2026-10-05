@@ -89,6 +89,20 @@ def can_self_update() -> bool:
     return is_frozen() and sys.platform == "win32"
 
 
+def independent_launch_env() -> dict[str, str]:
+    """Окружение для запуска НОВОЙ копии программы из работающей.
+
+    PyInstaller-onefile кладёт в окружение служебные переменные (_MEIPASS2, _PYI_*).
+    Процесс, запущенный из программы с этими переменными, считает себя её дочерним
+    и берёт временную папку родителя — а та удаляется, как только родитель закроется,
+    поэтому обновлённая версия падала бы при старте, ничего не показав (поймано
+    сквозным тестом на настоящей собранной программе). PYINSTALLER_RESET_ENVIRONMENT=1
+    велит загрузчику распаковаться заново, как при обычном запуске."""
+    env = {k: v for k, v in os.environ.items() if k != "_MEIPASS2" and not k.startswith("_PYI_")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
 def build_helper_script(
     pid: int, new_path: str, exe_path: str, bak_path: str | None = None, max_tries: int = MAX_SWAP_TRIES
 ) -> str:
@@ -148,6 +162,7 @@ def start_update(
     subprocess.Popen(
         ["cmd", "/c", helper_path],
         cwd=exe_dir,
+        env=independent_launch_env(),  # без этого новая копия, запущенная помощником, падает при старте
         # CREATE_NO_WINDOW, а не DETACHED_PROCESS: без консоли ping/tasklist/find внутри .bat
         # зависают (проверено сквозным тестом); скрытая консоль работает и окно не мигает.
         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
