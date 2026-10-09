@@ -493,12 +493,12 @@ def layout_settings_page(request: Request, import_id: str):
 
 @app.get("/report/{import_id}/layout.docx")
 def layout_docx(import_id: str, title: str = "", rooms: list[str] = Query(default=[]), days: list[str] = Query(default=[]),
-                all_columns: bool = False):
+                all_columns: bool = False, full_text: bool = False):
     inputs = _layout_inputs(import_id, rooms, days)
     if inputs is None:
         return _NOT_FOUND
     lessons, use_rooms, special, use_days = inputs
-    data = layout_export.build_docx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns)
+    data = layout_export.build_docx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns, brief=not full_text)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -508,12 +508,12 @@ def layout_docx(import_id: str, title: str = "", rooms: list[str] = Query(defaul
 
 @app.get("/report/{import_id}/layout.xlsx")
 def layout_xlsx(import_id: str, title: str = "", rooms: list[str] = Query(default=[]), days: list[str] = Query(default=[]),
-                all_columns: bool = False):
+                all_columns: bool = False, full_text: bool = False):
     inputs = _layout_inputs(import_id, rooms, days)
     if inputs is None:
         return _NOT_FOUND
     lessons, use_rooms, special, use_days = inputs
-    data = layout_export.build_xlsx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns)
+    data = layout_export.build_xlsx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns, brief=not full_text)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

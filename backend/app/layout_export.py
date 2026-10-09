@@ -12,7 +12,7 @@ from __future__ import annotations
 import io
 
 from app import conflicts as C
-from app import timegrid
+from app import subjects, timegrid
 from app.cabinets import _to_minutes
 from app.models import DAY_NAMES_RU, INDIVIDUAL_LESSON_MINUTES, Lesson, LessonType
 from app.parsers.common import strip_academic_title
@@ -30,7 +30,7 @@ def _merge_cell(here: list[Lesson], slot_start: int) -> list[dict]:
         if l.lesson_type == LessonType.GROUP:
             entries.append({
                 "kind": "group", "first": l.start_minutes >= slot_start, "teacher": l.teacher_name,
-                "subject": l.subject, "group": l.group_raw, "student": None, "accompanist": None,
+                "subject": l.subject, "group": l.group_raw, "group_norm": l.group_normalized, "student": None, "accompanist": None,
             })
             continue
         for e in entries:
@@ -45,25 +45,56 @@ def _merge_cell(here: list[Lesson], slot_start: int) -> list[dict]:
             entries.append({
                 "kind": "ind", "start": l.start_minutes, "student_key": C._student_key(l),
                 "teacher": l.teacher_name, "accompanist": l.accompanist_name,
-                "student": l.student_name, "group": l.group_raw, "subject": l.subject,
+                "student": l.student_name, "group": l.group_raw, "group_norm": l.group_normalized, "subject": l.subject,
             })
     return entries
 
 
-def entry_lines(e: dict) -> list[str]:
-    """Строки текста записи. Первая строка — главное лицо (в Word выделяется жирным)."""
+def short_student(name: str | None) -> str:
+    """'Авдеева Виктория' -> 'Авдеева В.'; уже сокращённое ('Витовтова Ю.') и одно слово не меняем."""
+    if not name:
+        return ""
+    tokens = name.replace("ё", "е").replace("Ё", "Е").split()
+    if len(tokens) < 2 or "-" in name or "," in name:
+        return name.strip()
+    given = tokens[1].strip(".")
+    return f"{tokens[0]} {given[0].upper()}." if given else tokens[0]
+
+
+def short_person(name: str | None) -> str:
+    """Преподаватель: без звания; полное ФИО -> 'Фамилия И.О.'; 'Фамилия И.О.' остаётся как есть."""
+    if not name:
+        return ""
+    name = strip_academic_title(name)
+    tokens = name.split()
+    if len(tokens) < 2 or tokens[1].endswith("."):
+        return name
+    return tokens[0] + " " + "".join(t[0].upper() + "." for t in tokens[1:3])
+
+
+def entry_lines(e: dict, brief: bool = False) -> list[str]:
+    """Строки текста записи. Первая строка — главное лицо (в Word выделяется жирным).
+
+    brief=True — «кратко», как пишут в ручной раскладке: студент «Фамилия И.», группа в чистом виде
+    («94Ф»), предмет коротким названием из словаря (subjects.py), концертмейстер «Фамилия И.О. (конц.)»."""
+    subject = (subjects.short(e["subject"]) if brief else e["subject"]) or ""
     if e["kind"] == "group":
         if not e["first"]:
-            return ["↑ пара продолжается"]
-        return [f"ПАРА {e['group'] or ''}".strip(), e["subject"] or "", strip_academic_title(e["teacher"]) if e["teacher"] else ""]
+            return ["↑ пара" if brief else "↑ пара продолжается"]
+        group = (e.get("group_norm") or e["group"] or "") if brief else (e["group"] or "")
+        teacher = short_person(e["teacher"]) if brief else (strip_academic_title(e["teacher"]) if e["teacher"] else "")
+        return [f"ПАРА {group}".strip(), subject, teacher]
+    conc = "(конц.)" if brief else "(концертмейстер)"
+    name = short_person if brief else (lambda n: strip_academic_title(n) if n else "")
     main = e["teacher"] or e["accompanist"]
-    lines = [strip_academic_title(main) + ("" if e["teacher"] else " (концертмейстер)") if main else "—"]
-    student = e["student"] or ""
-    lines.append(f"{student} · {e['group']}" if e["group"] else student)
-    if e["subject"]:
-        lines.append(e["subject"])
+    lines = [name(main) + ("" if e["teacher"] else f" {conc}") if main else "—"]
+    student = short_student(e["student"]) if brief else (e["student"] or "")
+    group = (e.get("group_norm") or e["group"]) if brief else e["group"]
+    lines.append(f"{student} {group}" if brief and group else f"{student} · {group}" if group else student)
+    if subject:
+        lines.append(subject)
     if e["teacher"] and e["accompanist"]:
-        lines.append(f"{strip_academic_title(e['accompanist'])} (концертмейстер)")
+        lines.append(f"{name(e['accompanist'])} {conc}")
     return [x for x in lines if x]
 
 
@@ -112,7 +143,7 @@ def build_layout(
     return result
 
 
-def cell_paragraphs(cell: dict) -> list[tuple[str, bool, bool]]:
+def cell_paragraphs(cell: dict, brief: bool = False) -> list[tuple[str, bool, bool]]:
     """Абзацы ячейки: (текст, жирный, тревожный цвет). Запись — строки entry_lines, между записями
     «— — —», накладка помечена первой строкой."""
     out: list[tuple[str, bool, bool]] = []
@@ -121,14 +152,14 @@ def cell_paragraphs(cell: dict) -> list[tuple[str, bool, bool]]:
     for k, e in enumerate(cell["entries"]):
         if k:
             out.append(("— — —", False, False))
-        out.extend((line, i == 0, False) for i, line in enumerate(entry_lines(e)))
+        out.extend((line, i == 0, False) for i, line in enumerate(entry_lines(e, brief)))
     return out
 
 
-def _cell_text(cell: dict) -> str:
+def _cell_text(cell: dict, brief: bool = False) -> str:
     if cell["state"] == "special":
         return ""
-    blocks = ["\n".join(entry_lines(e)) for e in cell["entries"]]
+    blocks = ["\n".join(entry_lines(e, brief)) for e in cell["entries"]]
     text = "\n— — —\n".join(blocks)
     return ("⚠ НАКЛАДКА\n" + text) if cell["state"] == "clash" else text
 
@@ -152,7 +183,7 @@ FLAT_HEADERS = ["День", "Начало", "Конец", "Кабинет", "Т�
 
 def build_xlsx(
     lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str,
-    days: list[int] | None = None, compact: bool = True,
+    days: list[int] | None = None, compact: bool = True, brief: bool = False,
 ) -> bytes:
     """Книга Excel: лист на каждый день (раскладка по кабинетам) + лист «Все занятия» (список с фильтрами)."""
     import openpyxl
@@ -179,7 +210,7 @@ def build_xlsx(
         for i, row in enumerate(d["rows"], start=3):
             ws.cell(i, 1, row["start"] + (f"\n{row['special']}" if row["special"] else "")).alignment = wrap
             for j, cell in enumerate(row["cells"], start=2):
-                text = _cell_text(cell)
+                text = _cell_text(cell, brief)
                 c = ws.cell(i, j, text)
                 c.alignment = wrap
                 if cell["state"] == "clash":
@@ -189,7 +220,7 @@ def build_xlsx(
             # Высоту строк с текстом НЕ задаём: Excel сам подгоняет её под перенос длинных слов по ширине
             # столбца (ручной расчёт по числу строк обрезал нижние строки в ячейках). Пустым слотам даём
             # нормальную минимальную высоту, чтобы они выглядели «коробочками», а не линиями.
-            if all(not _cell_text(c) for c in row["cells"]):
+            if all(not _cell_text(c, brief) for c in row["cells"]):
                 ws.row_dimensions[i].height = 30
         ws.freeze_panes = "B3"
         ws.page_setup.orientation = "landscape"
@@ -213,9 +244,21 @@ def build_xlsx(
     return buf.getvalue()
 
 
+MAX_COLUMNS_PER_TABLE = 12   # шире — таблица становится мелкой кашей; делим на две части (как две страницы ручной раскладки)
+
+
+def split_columns(rooms: list[str], limit: int = MAX_COLUMNS_PER_TABLE) -> list[list[str]]:
+    """Кабинеты дня -> группы не шире limit столбцов, поровну (14 -> 7+7, а не 12+2)."""
+    if len(rooms) <= limit:
+        return [list(rooms)]
+    parts = -(-len(rooms) // limit)
+    size = -(-len(rooms) // parts)
+    return [list(rooms[i:i + size]) for i in range(0, len(rooms), size)]
+
+
 def build_docx(
     lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str,
-    days: list[int] | None = None, compact: bool = True,
+    days: list[int] | None = None, compact: bool = True, brief: bool = False,
 ) -> bytes:
     """Word: альбомная страница, на каждый день — своя таблица (время × кабинеты), как в ручной раскладке.
 
@@ -291,50 +334,56 @@ def build_docx(
     layout = build_layout(lessons, rooms, special_slots, days, compact)
     if not layout:
         doc.add_paragraph("Нет данных для раскладки — не найдено индивидуальных занятий.")
-    for n, d in enumerate(layout):
-        if n:
-            doc.add_page_break()
-        h = doc.add_paragraph()
-        r = h.add_run(f"{title} — {d['name']}")
-        r.bold = True
-        r.font.size = Pt(13)
-        col_cm, font_pt[0] = sizes(len(d["rooms"]))
-        table = doc.add_table(rows=1, cols=1 + len(d["rooms"]))
-        table.style = "Table Grid"
-        table.autofit = False
-        set_cell_margins(table)
-        hdr = table.rows[0].cells
-        write(hdr[0], [("Часы", True, False)])
-        shade(hdr[0], "DDE3F5")
-        for j, room in enumerate(d["rooms"], start=1):
-            write(hdr[j], [(room, True, False)])
-            shade(hdr[j], "DDE3F5")
-        trPr = table.rows[0]._tr.get_or_add_trPr()   # шапка повторяется на каждой странице
-        flag = OxmlElement("w:tblHeader")
-        flag.set(qn("w:val"), "true")
-        trPr.append(flag)
-        for row in d["rows"]:
-            tr = table.add_row()
-            tr.height, tr.height_rule = Cm(row_cm), WD_ROW_HEIGHT_RULE.AT_LEAST
-            cant = OxmlElement("w:cantSplit")        # строка целиком на одной странице
-            cant.set(qn("w:val"), "true")
-            tr._tr.get_or_add_trPr().append(cant)
-            cells = tr.cells
-            write(cells[0], [(row["start"], True, False)] + ([(row["special"], False, False)] if row["special"] else []))
-            for j, cell in enumerate(row["cells"], start=1):
-                cells[j].vertical_alignment = WD_ALIGN_VERTICAL.TOP
-                if cell["state"] == "special":
-                    shade(cells[j], "E9ECEF")
-                    continue
-                if not cell["entries"]:
-                    continue
-                if cell["state"] == "clash":
-                    shade(cells[j], "F8D7DA")
-                write(cells[j], cell_paragraphs(cell))
-        for row in table.rows:
-            row.cells[0].width = Cm(time_col_cm)
-            for c in row.cells[1:]:
-                c.width = Cm(col_cm)
+    tables_done = 0
+    for d in layout:
+        for part, chunk in enumerate(split_columns(d["rooms"])):
+            if tables_done:
+                doc.add_page_break()
+            tables_done += 1
+            h = doc.add_paragraph()
+            suffix = f" (кабинеты {chunk[0]}–{chunk[-1]})" if len(d["rooms"]) > len(chunk) else ""
+            r = h.add_run(f"{title} — {d['name']}{suffix}")
+            r.bold = True
+            r.font.size = Pt(13)
+            col_cm, font_pt[0] = sizes(len(chunk))
+            idx = [d["rooms"].index(room) for room in chunk]
+            table = doc.add_table(rows=1, cols=1 + len(chunk))
+            table.style = "Table Grid"
+            table.autofit = False
+            set_cell_margins(table)
+            hdr = table.rows[0].cells
+            write(hdr[0], [("Часы", True, False)])
+            shade(hdr[0], "DDE3F5")
+            for j, room in enumerate(chunk, start=1):
+                write(hdr[j], [(room, True, False)])
+                shade(hdr[j], "DDE3F5")
+            trPr = table.rows[0]._tr.get_or_add_trPr()   # шапка повторяется на каждой странице
+            flag = OxmlElement("w:tblHeader")
+            flag.set(qn("w:val"), "true")
+            trPr.append(flag)
+            for row in d["rows"]:
+                tr = table.add_row()
+                tr.height, tr.height_rule = Cm(row_cm), WD_ROW_HEIGHT_RULE.AT_LEAST
+                cant = OxmlElement("w:cantSplit")        # строка целиком на одной странице
+                cant.set(qn("w:val"), "true")
+                tr._tr.get_or_add_trPr().append(cant)
+                cells = tr.cells
+                write(cells[0], [(row["start"], True, False)] + ([(row["special"], False, False)] if row["special"] else []))
+                for j, k in enumerate(idx, start=1):
+                    cell = row["cells"][k]
+                    cells[j].vertical_alignment = WD_ALIGN_VERTICAL.TOP
+                    if cell["state"] == "special":
+                        shade(cells[j], "E9ECEF")
+                        continue
+                    if not cell["entries"]:
+                        continue
+                    if cell["state"] == "clash":
+                        shade(cells[j], "F8D7DA")
+                    write(cells[j], cell_paragraphs(cell, brief))
+            for row in table.rows:
+                row.cells[0].width = Cm(time_col_cm)
+                for c in row.cells[1:]:
+                    c.width = Cm(col_cm)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()

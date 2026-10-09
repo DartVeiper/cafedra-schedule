@@ -182,13 +182,15 @@ def test_free_rooms_day_curator_hour_is_special(make_lesson):
     assert view["rows"][0]["cells"][-1]["state"] == "special"
 
 
-def test_layout_rooms_union_of_registry_and_busy_rooms(make_lesson):
-    """Раскладка по умолчанию: список кафедры + все «рабочие» кабинеты — а не только список
-    (жалоба: при одном кабинете в списке выгрузка получалась из одного столбика)."""
+def test_layout_rooms_default_is_all_rooms_with_lessons_plus_registry(make_lesson):
+    """Раскладка по умолчанию — на ВСЕ кабинеты (а не только список кафедры): иначе при одном кабинете в списке
+    получался один столбик. Пресет «самые загруженные» — через min_lessons."""
     lessons = [make_lesson(day=d, start=f"{8 + h}:30", room="417", student=f"С{d}{h}") for d in range(3) for h in range(6)]  # 18 занятий
     lessons += [make_lesson(room="418", student=f"Р{i}") for i in range(16)]                                                    # 16 занятий
     lessons += [make_lesson(room="999", student="Редкий")]                                                                      # 1 занятие
 
-    assert cabinets.layout_rooms(lessons, ["999"]) == ["417", "418", "999"]   # список кафедры + два рабочих кабинета
-    assert cabinets.layout_rooms(lessons, []) == ["417", "418"]               # без списка — только рабочие
+    assert cabinets.layout_rooms(lessons, ["417"]) == ["417", "418", "999"]
+    assert cabinets.layout_rooms(lessons, []) == ["417", "418", "999"]
+    assert cabinets.layout_rooms(lessons, [], min_lessons=15) == ["417", "418"]          # только загруженные
+    assert cabinets.layout_rooms(lessons, ["999"], min_lessons=15) == ["417", "418", "999"]
     assert cabinets.room_lesson_counts(lessons)["417"] == 18

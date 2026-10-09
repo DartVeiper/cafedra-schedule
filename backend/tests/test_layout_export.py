@@ -86,9 +86,9 @@ def test_excel_has_sheet_per_day_and_flat_list(make_lesson):
     assert flat.auto_filter.ref is not None
 
 
-def test_layout_rooms_fall_back_to_all_rooms_when_data_is_small(make_lesson):
-    lessons = _week(make_lesson)                       # в каждом кабинете всего по 3 занятия — «рабочих» нет
-    assert cabinets.layout_rooms(lessons, ["41", "40"]) == ["40", "41"]
+def test_layout_rooms_default_is_all_rooms(make_lesson):
+    lessons = _week(make_lesson)
+    assert cabinets.layout_rooms(lessons, ["41", "40"]) == [f"4{k}" for k in range(8)]
     assert cabinets.layout_rooms(lessons, []) == [f"4{k}" for k in range(8)]
 
 
@@ -231,3 +231,63 @@ def test_all_columns_switch_in_download_route(tmp_path, monkeypatch, make_lesson
 
     assert [len(t.rows[0].cells) for t in compact.tables] == [3, 2]
     assert [len(t.rows[0].cells) for t in allcols.tables] == [3, 3]
+
+
+def test_brief_mode_shortens_names_groups_and_subjects(make_lesson):
+    lessons = _week(make_lesson)
+    lessons[0].student_name, lessons[0].group_raw, lessons[0].group_normalized = "Авдеева Виктория", "94 ф", "94Ф"
+    lessons[0].subject = "специальный инструмент"
+    lessons.append(make_lesson(day=1, start="08:30", teacher=None, accompanist="Шейна Ольга Сергеевна", student="Авдеева Виктория",
+                               group="94 ф", room="40", subject="специальный инструмент"))
+    lessons[-1].group_normalized = "94Ф"
+    entry = layout_export.build_layout(lessons, ["40"])[0]["rows"][0]["cells"][0]["entries"][0]
+
+    assert layout_export.entry_lines(entry) [1] == "Авдеева Виктория · 94 ф"                  # полный режим как раньше
+    assert layout_export.entry_lines(entry, brief=True) == ["Преп0 П.П.", "Авдеева В. 94Ф", "спец.", "Шейна О.С. (конц.)"]
+
+
+def test_short_student_and_person():
+    assert layout_export.short_student("Авдеева Виктория") == "Авдеева В."
+    assert layout_export.short_student("Витовтова Ю.") == "Витовтова Ю."
+    assert layout_export.short_student("Карденас Мота Ана Мария") == "Карденас М."
+    assert layout_export.short_student("Сергиенко -Азарова") == "Сергиенко -Азарова"       # дуэт — не трогаем
+    assert layout_export.short_student("Попова") == "Попова"
+    assert layout_export.short_person("доц. Толмачева Э.Г.") == "Толмачева Э.Г."
+    assert layout_export.short_person("Исакина Любовь Борисовна") == "Исакина Л.Б."
+
+
+def test_split_columns_balances_parts():
+    assert layout_export.split_columns(["a"] * 12) == [["a"] * 12]
+    assert [len(p) for p in layout_export.split_columns(list("abcdefghijklmn"))] == [7, 7]          # 14 -> 7+7, а не 12+2
+    assert [len(p) for p in layout_export.split_columns([str(i) for i in range(25)])] == [9, 9, 7]
+
+
+def test_wide_day_is_split_into_two_tables_with_range_in_heading(make_lesson):
+    rooms = [str(400 + k) for k in range(14)]
+    lessons = [make_lesson(day=1, start=t, teacher=f"П{r}{t} П.П.", student=f"С{r}{t}", room=r) for r in rooms for t in ["08:30", "09:20", "10:15"]] * 1
+    # слоты надёжные (>=3 раза в день) — для каждого времени 14 занятий
+    doc = Document(BytesIO(layout_export.build_docx(lessons, rooms, [], "Раскладка")))
+
+    assert [len(t.rows[0].cells) for t in doc.tables] == [8, 8]                                    # 7 кабинетов + «Часы», дважды
+    headings = [p.text for p in doc.paragraphs if p.text.startswith("Раскладка")]
+    assert headings == ["Раскладка — Вторник (кабинеты 400–406)", "Раскладка — Вторник (кабинеты 407–413)"]
+
+
+def test_routes_default_is_brief_and_full_text_switch(tmp_path, monkeypatch, make_lesson):
+    lessons = _week(make_lesson)
+    lessons[0].student_name, lessons[0].subject = "Авдеева Виктория", "специальный инструмент"
+    conn = db.get_connection(str(tmp_path / "t.sqlite3"))
+    db.save_import(conn, "imp", lessons, {})
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(main_module, "DB_PATH", str(tmp_path / "t.sqlite3"))
+    client = TestClient(main_module.app)
+
+    def cell_text(**params):
+        doc = Document(BytesIO(client.get("/report/imp/layout.docx", params=params).content))
+        return "\n".join(c.text for r in doc.tables[0].rows for c in r.cells)
+
+    assert "Авдеева В." in cell_text() and "Авдеева Виктория" not in cell_text() and "спец." in cell_text()
+    assert "Авдеева Виктория" in cell_text(full_text="true") and "специальный инструмент" in cell_text(full_text="true")
+    wb = openpyxl.load_workbook(BytesIO(client.get("/report/imp/layout.xlsx").content))
+    assert "Авдеева В." in wb["Вторник"].cell(3, 2).value

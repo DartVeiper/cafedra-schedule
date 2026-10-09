@@ -303,13 +303,12 @@ def room_lesson_counts(lessons: list[Lesson]) -> dict[str, int]:
     return counts
 
 
-def layout_rooms(lessons: list[Lesson], registry_rooms: list[str] | None, min_lessons: int = BUSY_ROOM_MIN_LESSONS) -> list[str]:
-    """Столбцы раскладки по умолчанию: кабинеты из списка кафедры ПЛЮС все кабинеты, где реально проходит
-    много индивидуальных занятий. Раньше брался только список кафедры, и при одном-двух кабинетах в списке
-    выгрузка получалась из одного столбика — а раскладка нужна целиком, как ручная. Если ничего не набралось
-    (мало данных) — все кабинеты с занятиями."""
+def layout_rooms(lessons: list[Lesson], registry_rooms: list[str] | None, min_lessons: int = 0) -> list[str]:
+    """Столбцы раскладки по умолчанию: ВСЕ кабинеты, где есть индивидуальные занятия, плюс кабинеты списка кафедры.
+    Раскладка нужна целиком, как ручная; а какие кабинеты показывать, можно выбрать на странице настройки
+    («только список кафедры», «самые загруженные» и т.д.). В каждом дне показываются только кабинеты с занятиями
+    (см. layout_export.build_layout), поэтому «все» не превращается в десятки пустых столбцов.
+    min_lessons > 0 — оставить только кабинеты с таким числом занятий (пресет «самые загруженные»)."""
     counts = room_lesson_counts(lessons)
-    rooms = set(department_rooms(registry_rooms)) | {r for r, n in counts.items() if n >= min_lessons}
-    if not rooms:
-        rooms = set(counts)
+    rooms = set(department_rooms(registry_rooms)) | {r for r, n in counts.items() if n >= max(min_lessons, 1)}
     return sorted(rooms, key=room_sort_key)
