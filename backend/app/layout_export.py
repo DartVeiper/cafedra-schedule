@@ -68,7 +68,8 @@ def entry_lines(e: dict) -> list[str]:
 
 
 def build_layout(
-    lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None = None, days: list[int] | None = None
+    lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None = None, days: list[int] | None = None,
+    compact: bool = True,
 ) -> list[dict]:
     """[{day, name, slots:[{start, special}], rooms:[...], rows:[{start, special, cells:[{state, entries}]}]}]
     по каждому дню, где есть сетка. state: "free" | "busy" | "clash" | "special"."""
@@ -89,11 +90,16 @@ def build_layout(
             if sp["day"] == day and m not in starts:
                 specials[m] = sp["subject"].capitalize()
         starts = sorted(starts + list(specials))
+        # Как в ручной раскладке: набор столбцов меняется по дням — показываем только кабинеты, где в этот день
+        # есть занятия (иначе половина столбцов пустая, а текст в остальных мелко и тесно переносится).
+        day_rooms = [r for r in rooms if (r, day) in by_room_day] if compact else list(rooms)
+        if not day_rooms:
+            day_rooms = list(rooms)
         rows = []
         for start in starts:
             end = start + INDIVIDUAL_LESSON_MINUTES
             cells = []
-            for room in rooms:
+            for room in day_rooms:
                 if start in specials:
                     cells.append({"state": "special", "entries": []})
                     continue
@@ -102,7 +108,7 @@ def build_layout(
                 state = "free" if not entries else ("clash" if len(entries) > 1 else "busy")
                 cells.append({"state": state, "entries": entries})
             rows.append({"start": timegrid.fmt_minutes(start), "special": specials.get(start), "cells": cells})
-        result.append({"day": day, "name": DAY_NAMES_RU[day], "rooms": rooms, "rows": rows})
+        result.append({"day": day, "name": DAY_NAMES_RU[day], "rooms": day_rooms, "rows": rows})
     return result
 
 
@@ -146,7 +152,7 @@ FLAT_HEADERS = ["День", "Начало", "Конец", "Кабинет", "Т�
 
 def build_xlsx(
     lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str,
-    days: list[int] | None = None,
+    days: list[int] | None = None, compact: bool = True,
 ) -> bytes:
     """Книга Excel: лист на каждый день (раскладка по кабинетам) + лист «Все занятия» (список с фильтрами)."""
     import openpyxl
@@ -160,7 +166,7 @@ def build_xlsx(
     head = PatternFill("solid", fgColor="FFDDE3F5")
     wrap = Alignment(wrap_text=True, vertical="top")
 
-    for d in build_layout(lessons, rooms, special_slots, days):
+    for d in build_layout(lessons, rooms, special_slots, days, compact):
         ws = wb.create_sheet(d["name"])
         ws.cell(1, 1, f"{title} — {d['name']}").font = Font(bold=True, size=13)
         ws.cell(2, 1, "Время").font = Font(bold=True)
@@ -209,7 +215,7 @@ def build_xlsx(
 
 def build_docx(
     lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str,
-    days: list[int] | None = None,
+    days: list[int] | None = None, compact: bool = True,
 ) -> bytes:
     """Word: альбомная страница, на каждый день — своя таблица (время × кабинеты), как в ручной раскладке.
 
@@ -236,10 +242,12 @@ def build_docx(
 
     time_col_cm = 2.2
     usable_cm = 29.7 - 2.0 - time_col_cm
-    n_rooms = max(1, len(rooms))
-    col_cm = min(4.6, usable_cm / n_rooms)            # не растягиваем 1–3 кабинета на всю страницу
-    font_pt = 8.5 if col_cm >= 3.6 else (7.5 if col_cm >= 2.4 else 7)
     row_cm = 1.35                                      # минимальная высота строки времени (пустые слоты — «коробочки»)
+
+    def sizes(n_rooms: int) -> tuple[float, float]:
+        """(ширина столбца кабинета, шрифт) для таблицы с n кабинетами."""
+        col = min(4.6, usable_cm / max(1, n_rooms))     # не растягиваем 1–3 кабинета на всю страницу
+        return col, (8.5 if col >= 3.6 else 7.5 if col >= 2.4 else 6.5)
 
     def shade(cell, hex_fill: str) -> None:
         # В схеме Word свойства ячейки идут строго по порядку (… shd, noWrap, tcMar, …, vAlign), иначе
@@ -274,12 +282,13 @@ def build_docx(
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.space_before = Pt(0)
             run = p.add_run(text)
-            run.font.size = Pt(font_pt)
+            run.font.size = Pt(font_pt[0])
             run.bold = bold
             if alarm:
                 run.font.color.rgb = RGBColor(0xB0, 0x20, 0x2A)
 
-    layout = build_layout(lessons, rooms, special_slots, days)
+    font_pt = [8.0]          # меняется для каждого дня (см. ниже) — write() читает текущее значение
+    layout = build_layout(lessons, rooms, special_slots, days, compact)
     if not layout:
         doc.add_paragraph("Нет данных для раскладки — не найдено индивидуальных занятий.")
     for n, d in enumerate(layout):
@@ -289,6 +298,7 @@ def build_docx(
         r = h.add_run(f"{title} — {d['name']}")
         r.bold = True
         r.font.size = Pt(13)
+        col_cm, font_pt[0] = sizes(len(d["rooms"]))
         table = doc.add_table(rows=1, cols=1 + len(d["rooms"]))
         table.style = "Table Grid"
         table.autofit = False

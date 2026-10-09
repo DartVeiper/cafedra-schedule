@@ -23,14 +23,28 @@
   </div>
 
   <h2>Кабинеты</h2>
-  <p class="lead">{% if has_registry %}Отмечены кабинеты вашей кафедры из вкладки «Кабинеты» — добавьте или уберите нужные.
-    {% else %}Список кабинетов кафедры ещё не заполнен, поэтому отмечены все — оставьте только свои (или заполните список во вкладке «Кабинеты»).{% endif %}</p>
+  <p class="lead">Сразу отмечены кабинеты вашей кафедры из списка и все, где проходит много индивидуальных занятий
+    (от {{ busy_min }}) — так получается полная раскладка, как ваша ручная. Число рядом с кабинетом — сколько в нём индивидуальных
+    занятий в неделю. Лишнее снимите, недостающее отметьте.</p>
+  <label class="toggle-label" style="margin-bottom:10px">
+    <input type="checkbox" name="all_columns" value="true">
+    Показывать в каждом дне все выбранные кабинеты, даже пустые (по умолчанию в день — только те, где есть занятия, как в ручной раскладке)
+  </label>
+  <div class="page-actions" style="margin:0 0 10px">
+    <button type="button" class="btn-ghost" data-preset="default">Как по умолчанию</button>
+    <button type="button" class="btn-ghost" data-preset="registry">Только список кафедры{% if not has_registry %} (пуст){% endif %}</button>
+    <button type="button" class="btn-ghost" data-preset="all">Все кабинеты с занятиями</button>
+    <button type="button" class="btn-ghost" data-preset="none">Снять все</button>
+    <span id="room-total" class="wn-muted"></span>
+  </div>
   {% for floor, floor_rooms in floors %}
   <fieldset class="floor-group">
     <legend>{{ floor }} <label class="floor-all"><input type="checkbox" class="floor-toggle"> весь этаж</label></legend>
     <div class="floor-rooms">
       {% for room in floor_rooms %}
-      <label class="room-pick"><input type="checkbox" name="rooms" value="{{ room }}" {% if room in checked %}checked{% endif %}> {{ room }}</label>
+      <label class="room-pick"><input type="checkbox" name="rooms" value="{{ room }}"
+             data-default="{{ 1 if room in checked else 0 }}" data-registry="{{ 1 if room in registry else 0 }}"
+             {% if room in checked %}checked{% endif %}> {{ room }}<small class="room-count">{{ counts.get(room, 0) }}</small></label>
       {% endfor %}
     </div>
   </fieldset>
@@ -43,11 +57,32 @@
   <p class="wn-muted">В Excel дополнительно будет лист «Все занятия» — список всех занятий с фильтрами (он не зависит от выбранных кабинетов и дней).</p>
 </form>
 <script>
-  document.querySelectorAll('.floor-toggle').forEach(function (t) {
-    var group = t.closest('fieldset');
-    var boxes = group.querySelectorAll('input[name=rooms]');
-    t.checked = Array.prototype.every.call(boxes, function (c) { return c.checked; });
-    t.addEventListener('change', function () { boxes.forEach(function (c) { c.checked = t.checked; }); });
-  });
+  (function () {
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('input[name=rooms]'));
+    function refresh() {
+      document.getElementById('room-total').textContent = 'Выбрано кабинетов: ' + boxes.filter(function (b) { return b.checked; }).length + ' из ' + boxes.length;
+      document.querySelectorAll('.floor-toggle').forEach(function (t) {
+        var own = t.closest('fieldset').querySelectorAll('input[name=rooms]');
+        t.checked = Array.prototype.every.call(own, function (c) { return c.checked; });
+      });
+    }
+    document.querySelectorAll('.floor-toggle').forEach(function (t) {
+      t.addEventListener('change', function () {
+        t.closest('fieldset').querySelectorAll('input[name=rooms]').forEach(function (c) { c.checked = t.checked; });
+        refresh();
+      });
+    });
+    boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+    document.querySelectorAll('[data-preset]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var p = btn.dataset.preset;
+        boxes.forEach(function (b) {
+          b.checked = p === 'all' ? true : p === 'none' ? false : p === 'registry' ? b.dataset.registry === '1' : b.dataset.default === '1';
+        });
+        refresh();
+      });
+    });
+    refresh();
+  })();
 </script>
 {% endblock %}

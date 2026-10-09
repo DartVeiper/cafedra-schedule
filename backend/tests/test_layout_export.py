@@ -86,8 +86,8 @@ def test_excel_has_sheet_per_day_and_flat_list(make_lesson):
     assert flat.auto_filter.ref is not None
 
 
-def test_layout_rooms_use_registry_else_all_individual_rooms(make_lesson):
-    lessons = _week(make_lesson)
+def test_layout_rooms_fall_back_to_all_rooms_when_data_is_small(make_lesson):
+    lessons = _week(make_lesson)                       # в каждом кабинете всего по 3 занятия — «рабочих» нет
     assert cabinets.layout_rooms(lessons, ["41", "40"]) == ["40", "41"]
     assert cabinets.layout_rooms(lessons, []) == [f"4{k}" for k in range(8)]
 
@@ -175,3 +175,59 @@ def test_word_cell_properties_follow_schema_order(make_lesson):
                     assert tags.index(qn("w:shd")) < tags.index(qn("w:vAlign"))
                     checked += 1
     assert checked >= 3          # шапка, накладка, кураторский час
+
+
+def test_default_download_without_choice_includes_busy_rooms_not_just_registry(tmp_path, monkeypatch, make_lesson):
+    lessons = [make_lesson(day=1, start=f"{8 + h}:30", room=r, teacher=f"П{r}{h}", student=f"С{r}{h}{k}")
+               for r in ("417", "418", "419") for h in range(5) for k in range(2)]            # по 10 в трёх кабинетах…
+    lessons += [make_lesson(day=1, start=f"{8 + h}:30", room=r, teacher=f"Q{r}{h}", student=f"Z{r}{h}")
+                for r in ("417", "418", "419") for h in range(5)]                              # …и ещё по 5 = 15 в каждом
+    conn = db.get_connection(str(tmp_path / "t.sqlite3"))
+    db.save_import(conn, "imp", lessons, {})
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(main_module, "DB_PATH", str(tmp_path / "t.sqlite3"))
+    from app import cabinets as cab
+    cab.save_config(main_module.CABINETS_PATH, cab.add_room(cab.load_config(main_module.CABINETS_PATH), "417"))  # в списке только 417
+    client = TestClient(main_module.app)
+
+    doc = Document(BytesIO(client.get("/report/imp/layout.docx").content))
+    assert [c.text for c in doc.tables[0].rows[0].cells] == ["Часы", "417", "418", "419"]    # не один столбик
+
+    page = client.get("/report/imp/layout").text
+    assert 'data-preset="registry"' in page and page.count('data-default="1"') == 3 and "Выбрано кабинетов" in page
+
+
+def test_compact_layout_shows_only_rooms_used_that_day(make_lesson):
+    """Как в ручной раскладке: набор столбцов меняется по дням — пустые в этот день кабинеты не показываем."""
+    lessons = _week(make_lesson)                                                  # вторник: кабинеты 40..47
+    lessons += [make_lesson(day=3, start=t, teacher=f"Ч{k} Ч.Ч.", student=f"Ч{t}{k}", room="41") for t in ["08:30", "09:20", "10:15"] for k in range(8)]
+
+    tuesday, thursday = layout_export.build_layout(lessons, ["40", "41", "42"], [], None, compact=True)
+    assert tuesday["rooms"] == ["40", "41", "42"] and thursday["rooms"] == ["41"]       # в четверг занят только 41
+
+    full = layout_export.build_layout(lessons, ["40", "41", "42"], [], None, compact=False)
+    assert [d["rooms"] for d in full] == [["40", "41", "42"]] * 2
+
+    doc = Document(BytesIO(layout_export.build_docx(lessons, ["40", "41", "42"], [], "t")))
+    assert [len(t.rows[0].cells) for t in doc.tables] == [4, 2]                         # колонок: часы + кабинеты дня
+    wb = openpyxl.load_workbook(BytesIO(layout_export.build_xlsx(lessons, ["40", "41", "42"], [], "t", compact=False)))
+    assert wb["Четверг"].max_column == 4                                                # «все столбцы»: часы + 3 кабинета
+
+
+def test_all_columns_switch_in_download_route(tmp_path, monkeypatch, make_lesson):
+    conn = db.get_connection(str(tmp_path / "t.sqlite3"))
+    lessons = _week(make_lesson) + [make_lesson(day=3, start=t, teacher=f"Ч{k} Ч.Ч.", student=f"Ч{t}{k}", room="41")
+                                    for t in ["08:30", "09:20", "10:15"] for k in range(8)]
+    db.save_import(conn, "imp", lessons, {})
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(main_module, "DB_PATH", str(tmp_path / "t.sqlite3"))
+    client = TestClient(main_module.app)
+    q = {"rooms": ["40", "41"]}
+
+    compact = Document(BytesIO(client.get("/report/imp/layout.docx", params=q).content))
+    allcols = Document(BytesIO(client.get("/report/imp/layout.docx", params={**q, "all_columns": "true"}).content))
+
+    assert [len(t.rows[0].cells) for t in compact.tables] == [3, 2]
+    assert [len(t.rows[0].cells) for t in allcols.tables] == [3, 3]

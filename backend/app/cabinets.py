@@ -292,11 +292,24 @@ def free_rooms_day(
     return {"slots": slots, "rows": rows, "day": day}
 
 
-def layout_rooms(lessons: list[Lesson], registry_rooms: list[str] | None) -> list[str]:
-    """Столбцы раскладки: кабинеты кафедры из списка; если список ещё не заполнен — все кабинеты,
-    где есть индивидуальные занятия (чтобы выгрузка работала и «из коробки»)."""
-    rooms = department_rooms(registry_rooms)
-    if rooms:
-        return rooms
-    return sorted({l.room_normalized for l in lessons if l.lesson_type == LessonType.INDIVIDUAL and l.room_normalized},
-                  key=room_sort_key)
+BUSY_ROOM_MIN_LESSONS = 15   # кабинет считается «рабочим» для раскладки, если в нём не меньше стольких индивидуальных занятий
+
+
+def room_lesson_counts(lessons: list[Lesson]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for l in lessons:
+        if l.lesson_type == LessonType.INDIVIDUAL and l.room_normalized:
+            counts[l.room_normalized] = counts.get(l.room_normalized, 0) + 1
+    return counts
+
+
+def layout_rooms(lessons: list[Lesson], registry_rooms: list[str] | None, min_lessons: int = BUSY_ROOM_MIN_LESSONS) -> list[str]:
+    """Столбцы раскладки по умолчанию: кабинеты из списка кафедры ПЛЮС все кабинеты, где реально проходит
+    много индивидуальных занятий. Раньше брался только список кафедры, и при одном-двух кабинетах в списке
+    выгрузка получалась из одного столбика — а раскладка нужна целиком, как ручная. Если ничего не набралось
+    (мало данных) — все кабинеты с занятиями."""
+    counts = room_lesson_counts(lessons)
+    rooms = set(department_rooms(registry_rooms)) | {r for r, n in counts.items() if n >= min_lessons}
+    if not rooms:
+        rooms = set(counts)
+    return sorted(rooms, key=room_sort_key)

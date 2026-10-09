@@ -180,3 +180,15 @@ def test_free_rooms_day_curator_hour_is_special(make_lesson):
     assert [s["start"] for s in view["slots"]][-1] == "14:25"
     assert view["slots"][-1]["special"] == "Кураторский час"
     assert view["rows"][0]["cells"][-1]["state"] == "special"
+
+
+def test_layout_rooms_union_of_registry_and_busy_rooms(make_lesson):
+    """Раскладка по умолчанию: список кафедры + все «рабочие» кабинеты — а не только список
+    (жалоба: при одном кабинете в списке выгрузка получалась из одного столбика)."""
+    lessons = [make_lesson(day=d, start=f"{8 + h}:30", room="417", student=f"С{d}{h}") for d in range(3) for h in range(6)]  # 18 занятий
+    lessons += [make_lesson(room="418", student=f"Р{i}") for i in range(16)]                                                    # 16 занятий
+    lessons += [make_lesson(room="999", student="Редкий")]                                                                      # 1 занятие
+
+    assert cabinets.layout_rooms(lessons, ["999"]) == ["417", "418", "999"]   # список кафедры + два рабочих кабинета
+    assert cabinets.layout_rooms(lessons, []) == ["417", "418"]               # без списка — только рабочие
+    assert cabinets.room_lesson_counts(lessons)["417"] == 18

@@ -575,3 +575,6 @@ dialog.whatsnew[open] { display: flex; flex-direction: column; }
 .progress-bar.indeterminate { width: 35%; animation: slide 1.1s ease-in-out infinite alternate; }
 @keyframes slide { from { margin-left: 0; } to { margin-left: 65%; } }
 .upd-status { font-weight: 600; margin: 10px 0 6px; }
+
+.room-count { margin-left: 6px; color: var(--muted); font-size: 0.72rem; }
+.btn-link { color: var(--accent); font-size: 0.85rem; align-self: center; }

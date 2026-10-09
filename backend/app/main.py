@@ -472,28 +472,33 @@ def layout_settings_page(request: Request, import_id: str):
     lessons, notes = _load_import(import_id)
     if lessons is None:
         return _NOT_FOUND
-    registry = cabinets_module.department_rooms(cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH)))
-    candidates = cabinets_module.department_rooms(
-        sorted({l.room_normalized for l in lessons if l.lesson_type.value == "individual" and l.room_normalized} | set(registry))
-    )
-    checked = set(registry) if registry else set(candidates)
+    registry_raw = cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH))
+    registry = cabinets_module.department_rooms(registry_raw)
+    counts = cabinets_module.room_lesson_counts(lessons)
+    candidates = cabinets_module.department_rooms(sorted(set(counts) | set(registry)))
+    checked = set(cabinets_module.layout_rooms(lessons, registry_raw))
     days = sorted(timegrid.build_day_grids(lessons).keys())
     return templates.TemplateResponse(request, "layout_settings.html", {
         "import_id": import_id,
         "floors": cabinets_module.group_rooms_by_floor(candidates),
         "checked": checked,
+        "counts": counts,
+        "registry": set(registry),
+        "busy": {r for r, n in counts.items() if n >= cabinets_module.BUSY_ROOM_MIN_LESSONS},
+        "busy_min": cabinets_module.BUSY_ROOM_MIN_LESSONS,
         "has_registry": bool(registry),
         "days": days, "day_names": DAY_NAMES_RU,
     })
 
 
 @app.get("/report/{import_id}/layout.docx")
-def layout_docx(import_id: str, title: str = "", rooms: list[str] = Query(default=[]), days: list[str] = Query(default=[])):
+def layout_docx(import_id: str, title: str = "", rooms: list[str] = Query(default=[]), days: list[str] = Query(default=[]),
+                all_columns: bool = False):
     inputs = _layout_inputs(import_id, rooms, days)
     if inputs is None:
         return _NOT_FOUND
     lessons, use_rooms, special, use_days = inputs
-    data = layout_export.build_docx(lessons, use_rooms, special, _layout_title(title), use_days)
+    data = layout_export.build_docx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -502,12 +507,13 @@ def layout_docx(import_id: str, title: str = "", rooms: list[str] = Query(defaul
 
 
 @app.get("/report/{import_id}/layout.xlsx")
-def layout_xlsx(import_id: str, title: str = "", rooms: list[str] = Query(default=[]), days: list[str] = Query(default=[])):
+def layout_xlsx(import_id: str, title: str = "", rooms: list[str] = Query(default=[]), days: list[str] = Query(default=[]),
+                all_columns: bool = False):
     inputs = _layout_inputs(import_id, rooms, days)
     if inputs is None:
         return _NOT_FOUND
     lessons, use_rooms, special, use_days = inputs
-    data = layout_export.build_xlsx(lessons, use_rooms, special, _layout_title(title), use_days)
+    data = layout_export.build_xlsx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
