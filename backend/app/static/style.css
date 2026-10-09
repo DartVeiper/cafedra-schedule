@@ -555,3 +555,10 @@ dialog.whatsnew[open] { display: flex; flex-direction: column; }
 .floor-rooms { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .room-pick { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); cursor: pointer; font-variant-numeric: tabular-nums; }
 .room-pick:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); }
+
+/* ---------- Окно установки обновления ---------- */
+.update-progress { margin-top: 24px; }
+.spinner { width: 36px; height: 36px; border: 4px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; margin: 18px 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.update-progress ol { padding-left: 22px; }
+.update-progress li { margin: 6px 0; }

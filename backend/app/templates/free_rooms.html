@@ -17,6 +17,9 @@
   {% endfor %}
 </div>
 
+<p class="wn-muted">Всё расписание по кабинетам для печати, в виде вашей ручной раскладки:
+  <a href="/report/{{ import_id }}/layout.docx">скачать в Word</a> · <a href="/report/{{ import_id }}/layout.xlsx">скачать в Excel</a>
+  (в Excel ещё и список всех занятий с фильтрами).</p>
 {% if not has_rooms %}
 <div class="setup-card">
   <h2 style="margin-top:0">Сначала укажите кабинеты вашей кафедры</h2>

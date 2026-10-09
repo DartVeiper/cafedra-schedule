@@ -73,8 +73,10 @@
   </div>
   <div class="page-actions">
     <a class="btn btn-secondary" href="/report/{{ import_id }}/teachers">Листы преподавателям</a>
-    <a class="btn btn-secondary" href="/report/{{ import_id }}/export.xlsx{{ export_qs }}">⬇ Excel</a>
-    <a class="btn btn-secondary" href="/report/{{ import_id }}/export.docx{{ export_qs }}">⬇ Word</a>
+    <a class="btn btn-secondary" href="/report/{{ import_id }}/layout.docx" title="Всё расписание по кабинетам, как в ручной раскладке">⬇ Раскладка (Word)</a>
+    <a class="btn btn-secondary" href="/report/{{ import_id }}/layout.xlsx" title="Раскладка по дням + список всех занятий">⬇ Раскладка (Excel)</a>
+    <a class="btn btn-secondary" href="/report/{{ import_id }}/export.xlsx{{ export_qs }}">⬇ Накладки (Excel)</a>
+    <a class="btn btn-secondary" href="/report/{{ import_id }}/export.docx{{ export_qs }}">⬇ Накладки (Word)</a>
     <form method="post" action="/report/{{ import_id }}/delete" class="delete-import-form"
           onsubmit="return confirm('Удалить эту проверку без возможности восстановления?');">
       <button type="submit" class="delete-link">Удалить проверку</button>

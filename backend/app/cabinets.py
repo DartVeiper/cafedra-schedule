@@ -290,3 +290,13 @@ def free_rooms_day(
                 cells.append({"state": "clash" if len(here) > 1 else "busy", "who": [_short_name(l) for l in here]})
         rows.append({"room": room, "cells": cells})
     return {"slots": slots, "rows": rows, "day": day}
+
+
+def layout_rooms(lessons: list[Lesson], registry_rooms: list[str] | None) -> list[str]:
+    """Столбцы раскладки: кабинеты кафедры из списка; если список ещё не заполнен — все кабинеты,
+    где есть индивидуальные занятия (чтобы выгрузка работала и «из коробки»)."""
+    rooms = department_rooms(registry_rooms)
+    if rooms:
+        return rooms
+    return sorted({l.room_normalized for l in lessons if l.lesson_type == LessonType.INDIVIDUAL and l.room_normalized},
+                  key=room_sort_key)

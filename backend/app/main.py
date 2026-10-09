@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 from app import cabinets as cabinets_module
 from app import db, self_update
 from app import dismissed as dismissed_module
-from app import load_checks, teacher_sheets, timegrid
+from app import layout_export, load_checks, teacher_sheets, timegrid
 from app.conflicts import conflict_key, find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
 from app.parsers.common import strip_academic_title
@@ -143,8 +143,15 @@ def upload_form(request: Request, backup_msg: str = "", backup_ok: str = ""):
     })
 
 
+@app.get("/api/version")
+def api_version():
+    """Версия запущенной программы — по ней страница обновления понимает, что новая версия
+    запустилась после перезапуска (см. update_progress.html)."""
+    return {"version": APP_VERSION}
+
+
 @app.post("/update/apply", response_class=HTMLResponse)
-def apply_update():
+def apply_update(request: Request):
     """Скачивает и устанавливает обновление поверх текущего .exe (см. self_update.py).
     Ссылку на скачивание берём из собственной кэшированной проверки, а не от
     клиента — чтобы нельзя было подсунуть форме произвольный URL для скачивания."""
@@ -172,14 +179,9 @@ def apply_update():
             status_code=500,
         )
     self_update.schedule_exit()
-    return (
-        "<div style='font-family:sans-serif;max-width:560px;margin:80px auto;padding:0 20px'>"
-        f"<h1>Устанавливаем версию {info['version']}</h1>"
-        "<p>Программа сейчас закроется и перезапустится сама — окно консоли "
-        "и вкладка браузера откроются заново автоматически через несколько секунд. "
-        "Ничего нажимать не нужно, просто подождите.</p>"
-        "</div>"
-    )
+    return templates.TemplateResponse(request, "update_progress.html", {
+        "version": info["version"], "release_url": info["url"],
+    })
 
 
 @app.post("/import")
@@ -448,6 +450,42 @@ def teacher_sheet_docx(import_id: str, name: str = ""):
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(f"nakladki_{name}.docx")},
+    )
+
+
+def _layout_inputs(import_id: str):
+    lessons, notes = _load_import(import_id)
+    if lessons is None:
+        return None
+    registry = cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH))
+    return lessons, cabinets_module.layout_rooms(lessons, registry), (notes or {}).get("special_slots", [])
+
+
+@app.get("/report/{import_id}/layout.docx")
+def layout_docx(import_id: str):
+    inputs = _layout_inputs(import_id)
+    if inputs is None:
+        return _NOT_FOUND
+    lessons, rooms, special = inputs
+    data = layout_export.build_docx(lessons, rooms, special, "Раскладка по кабинетам")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename=raskladka_{import_id}.docx"},
+    )
+
+
+@app.get("/report/{import_id}/layout.xlsx")
+def layout_xlsx(import_id: str):
+    inputs = _layout_inputs(import_id)
+    if inputs is None:
+        return _NOT_FOUND
+    lessons, rooms, special = inputs
+    data = layout_export.build_xlsx(lessons, rooms, special, "Раскладка по кабинетам")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=raskladka_{import_id}.xlsx"},
     )
 
 

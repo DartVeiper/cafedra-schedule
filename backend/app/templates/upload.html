@@ -17,6 +17,7 @@
       <button type="submit" class="update-btn" id="update-btn">Скачать и установить</button>
       <span class="update-note">Программа скачает файл и перезапустится сама — старую копию менять не нужно. Несохранённого ничего нет: проверки хранятся на диске.</span>
     </form>
+    <p class="update-note" style="margin:8px 0 0">Не получается обновиться? <a href="{{ update_info.url }}" target="_blank" rel="noopener">Скачать вручную</a></p>
     {% else %}
     <a class="btn" href="{{ update_info.url }}" target="_blank" rel="noopener">Скачать с GitHub</a>
     {% endif %}

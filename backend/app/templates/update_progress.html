@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% set nav = 'upload' %}
+{% block title %}Обновление · Проверка расписания{% endblock %}
+{% block page_class %}narrow{% endblock %}
+{% block content %}
+<div class="update-progress">
+  <h1 id="upd-title">Устанавливаем версию {{ version }}…</h1>
+  <p id="upd-text" class="lead">Программа сейчас закроется и запустится заново сама — это занимает от 10 секунд до минуты.
+    <b>Это окно браузера не закрывайте</b>: как только всё получится, оно само вернёт вас на главную страницу.
+    Ваши проверки и настройки при обновлении не пропадают.</p>
+  <div class="spinner" id="upd-spinner" aria-hidden="true"></div>
+
+  <div id="upd-fail" class="failed-files-banner" hidden>
+    <b id="upd-fail-title">Автоматически обновиться не получилось.</b>
+    <p id="upd-fail-reason" class="wn-muted"></p>
+    <p>Ничего страшного — данные не пострадали. Обновите программу вручную (это займёт минуту):</p>
+    <ol>
+      <li>Закройте программу: чёрное окно, которое открывается вместе с ней (если оно ещё открыто — просто закройте его крестиком).</li>
+      <li>Скачайте новый файл <b>CafedraSchedule.exe</b> на <a href="{{ release_url }}" target="_blank" rel="noopener">странице версии {{ version }}</a>
+        (раздел «Assets», внизу страницы).</li>
+      <li>Положите его на место старого (или рядом) и запустите двойным щелчком.</li>
+    </ol>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  // Страница сама следит за перезапуском: программа закрывается (запросы перестают отвечать), затем
+  // запускается снова — уже новой версии. Если этого не случилось, честно говорим об этом и даём
+  // ручной способ, а не оставляем человека перед пустым окном.
+  (function () {
+    const target = {{ version|tojson }};
+    const norm = (v) => String(v).replace(/^v/i, '');
+    let wasDown = false, finished = false;
+    const start = Date.now();
+
+    function fail(reason) {
+      finished = true;
+      document.getElementById('upd-spinner').hidden = true;
+      document.getElementById('upd-title').textContent = 'Обновление не завершилось';
+      document.getElementById('upd-text').hidden = true;
+      document.getElementById('upd-fail-reason').textContent = reason;
+      document.getElementById('upd-fail').hidden = false;
+    }
+    function ok(version) {
+      finished = true;
+      document.getElementById('upd-spinner').hidden = true;
+      document.getElementById('upd-title').textContent = 'Готово! Установлена версия ' + version;
+      document.getElementById('upd-text').textContent = 'Возвращаемся на главную страницу…';
+      setTimeout(() => { location.href = '/'; }, 1500);
+    }
+    async function tick() {
+      if (finished) return;
+      try {
+        const r = await fetch('/api/version', { cache: 'no-store' });
+        const j = await r.json();
+        if (wasDown) {
+          if (norm(j.version) === norm(target)) ok(j.version);
+          else fail('После перезапуска запустилась прежняя версия (' + j.version + ').');
+          return;
+        }
+        if (Date.now() - start > 30000) { fail('Программа не закрылась для установки новой версии.'); return; }
+      } catch (e) {
+        wasDown = true;                      // программа закрылась — ждём, пока запустится новая
+      }
+      if (Date.now() - start > 180000) { fail('Новая версия не запустилась за 3 минуты.'); return; }
+      setTimeout(tick, 1500);
+    }
+    setTimeout(tick, 1500);
+  })();
+</script>
+{% endblock %}

@@ -93,3 +93,32 @@ def test_release_script_checks_tag_against_version(monkeypatch):
 
     bad = subprocess.run([sys.executable, str(script), "v9.9.9"], capture_output=True, encoding="utf-8")
     assert bad.returncode == 1 and "не совпадает с APP_VERSION" in bad.stderr
+
+
+def test_api_version_and_update_progress_page(monkeypatch):
+    info = {"version": "v9.9.9", "url": "https://github.com/x/y/releases/tag/v9.9.9",
+            "download_url": "https://x/CafedraSchedule.exe", "size": 10, "notes": ""}
+    monkeypatch.setattr(main_module, "check_for_update", lambda force=False: info)
+    monkeypatch.setattr(main_module.self_update, "can_self_update", lambda: True)
+    monkeypatch.setattr(main_module.self_update, "start_update", lambda url, expected_size=None: None)
+    monkeypatch.setattr(main_module.self_update, "schedule_exit", lambda: None)
+    client = TestClient(main_module.app)
+
+    assert client.get("/api/version").json() == {"version": APP_VERSION}
+
+    page = client.post("/update/apply").text
+    assert "Устанавливаем версию v9.9.9" in page
+    assert "/api/version" in page and '"v9.9.9"' in page                      # страница следит за перезапуском
+    assert "https://github.com/x/y/releases/tag/v9.9.9" in page and "CafedraSchedule.exe" in page   # ручной способ
+
+
+def test_update_banner_has_manual_download_fallback(monkeypatch):
+    info = {"version": "v9.9.9", "url": "https://github.com/x/y/releases/tag/v9.9.9",
+            "download_url": "https://x/CafedraSchedule.exe", "size": 10, "notes": ""}
+    monkeypatch.setattr(update_check, "_cache", {"checked_at": 0.0, "result": info})
+    monkeypatch.setattr(main_module, "check_for_update", lambda force=False: info)
+    monkeypatch.setattr(main_module.self_update, "can_self_update", lambda: True)
+
+    page = TestClient(main_module.app).get("/").text
+
+    assert "Скачать и установить" in page and "Скачать вручную" in page
