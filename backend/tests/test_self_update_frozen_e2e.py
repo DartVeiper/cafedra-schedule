@@ -92,7 +92,9 @@ def test_real_frozen_app_updates_itself_and_new_copy_starts(tmp_path, probe_exe,
 
     env = dict(os.environ, PROBE_STATE_DIR=str(state_dir))
     proc = subprocess.Popen([str(exe), "--update", server], env=env, cwd=str(app_dir),
-                            creationflags=subprocess.CREATE_NEW_CONSOLE)
+                            creationflags=subprocess.CREATE_NO_WINDOW)  # скрытая консоль: как у настоящей
+                            # программы (она консольная), но без видимого окна — тест не зависит от состояния
+                            # рабочего стола (с CREATE_NEW_CONSOLE он зависал, когда сеанс Windows простаивал)
     try:
         ok = _wait_until(lambda: len(_read_log(log)) >= 2)
         starts = _read_log(log)

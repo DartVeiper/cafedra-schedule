@@ -15,6 +15,7 @@ from datetime import datetime
 
 from app import cabinets as cabinets_module
 from app import dismissed as dismissed_module
+from app import room_aliases as aliases_module
 
 BACKUP_APP = "CafedraSchedule"
 BACKUP_FORMAT = 1
@@ -26,8 +27,8 @@ class BackupError(ValueError):
     """Файл не похож на копию настроек этой программы — текст ошибки показываем человеку."""
 
 
-def build_backup(cabinets_path: str, dismissed_path: str, app_version: str) -> dict:
-    return {
+def build_backup(cabinets_path: str, dismissed_path: str, app_version: str, aliases_path: str | None = None) -> dict:
+    out = {
         "app": BACKUP_APP,
         "format": BACKUP_FORMAT,
         "version": app_version,
@@ -35,9 +36,12 @@ def build_backup(cabinets_path: str, dismissed_path: str, app_version: str) -> d
         "cabinets": cabinets_module.load_config(cabinets_path),
         "dismissed": dismissed_module.load_dismissed(dismissed_path),
     }
+    if aliases_path:
+        out["room_aliases"] = aliases_module.load_aliases(aliases_path)
+    return out
 
 
-def restore_backup(data: object, cabinets_path: str, dismissed_path: str) -> dict:
+def restore_backup(data: object, cabinets_path: str, dismissed_path: str, aliases_path: str | None = None) -> dict:
     """Объединяет копию с текущими настройками. Возвращает {"rooms": сколько кабинетов
     добавлено, "marks": сколько пометок добавлено}."""
     if not isinstance(data, dict) or data.get("app") != BACKUP_APP:
@@ -79,4 +83,13 @@ def restore_backup(data: object, cabinets_path: str, dismissed_path: str) -> dic
             marks_added += 1
     if marks_added:
         dismissed_module._save(dismissed_path, current)
+
+    # --- «один кабинет — несколько названий» (объединяем с текущими)
+    if aliases_path and isinstance(data.get("room_aliases"), dict):
+        al = aliases_module.load_aliases(aliases_path)
+        for room, v in list(data["room_aliases"].items())[:200]:
+            if isinstance(room, str) and isinstance(v, dict):
+                for name in [n for n in v.get("names", []) if isinstance(n, str)][:50]:
+                    aliases_module.add_name(al, name, room, v.get("label", "") if isinstance(v.get("label", ""), str) else "")
+        aliases_module.save_aliases(aliases_path, al)
     return {"rooms": rooms_added, "marks": marks_added}

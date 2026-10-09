@@ -26,9 +26,10 @@ from app import layout_export, load_checks, teacher_sheets, timegrid, update_job
 from app.conflicts import conflict_key, find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
 from app.parsers.common import strip_academic_title
-from app.paths import app_package_dir, cabinets_config_path, dismissed_conflicts_path, migrate_legacy_storage, runtime_data_dir
+from app.paths import app_package_dir, cabinets_config_path, dismissed_conflicts_path, room_aliases_path, migrate_legacy_storage, runtime_data_dir
 from app.pipeline import known_groups_from_filenames, load_group_lessons, load_individual_lessons
 from app import backup as backup_module
+from app import room_aliases as aliases_module
 from app import changelog
 from app import compare as compare_module
 from app.mdlite import render_markdown_lite
@@ -43,6 +44,7 @@ UPLOADS_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "db", "cafedra.sqlite3")
 CABINETS_PATH = cabinets_config_path()
 DISMISSED_PATH = dismissed_conflicts_path()
+ALIASES_PATH = room_aliases_path()
 
 INDIVIDUAL_EXTS = {".xls", ".xlsx"}
 GROUP_EXTS = {".doc", ".docx"}
@@ -98,7 +100,7 @@ def _format_ru_datetime(value: str) -> str:
 
 @app.get("/backup/download")
 def backup_download():
-    data = backup_module.build_backup(CABINETS_PATH, DISMISSED_PATH, APP_VERSION)
+    data = backup_module.build_backup(CABINETS_PATH, DISMISSED_PATH, APP_VERSION, ALIASES_PATH)
     body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
     name = f"cafedra-settings-{datetime.now():%Y-%m-%d}.json"
     return StreamingResponse(
@@ -117,7 +119,7 @@ async def backup_restore(file: UploadFile = File(...)):
             data = json.loads(raw.decode("utf-8-sig"))
         except (ValueError, UnicodeDecodeError):
             raise backup_module.BackupError("Файл не читается — это не копия настроек программы.")
-        result = backup_module.restore_backup(data, CABINETS_PATH, DISMISSED_PATH)
+        result = backup_module.restore_backup(data, CABINETS_PATH, DISMISSED_PATH, ALIASES_PATH)
         msg = f"Копия восстановлена: добавлено кабинетов — {result['rooms']}, пометок «это не накладка» — {result['marks']}."
         qs = urlencode({"backup_msg": msg, "backup_ok": "1"})
     except backup_module.BackupError as e:
@@ -288,12 +290,29 @@ def delete_import(import_id: str):
     return RedirectResponse(url="/", status_code=303)
 
 
+def _aliases() -> dict:
+    return aliases_module.load_aliases(ALIASES_PATH)
+
+
+def _apply_aliases(lessons: list) -> list:
+    """Сводит разные названия одного кабинета (423 / м/ф / малый зал) к одному — при каждой загрузке
+    проверки, поэтому работает и для старых проверок."""
+    aliases_module.apply(lessons, _aliases())
+    return lessons
+
+
+def _registry_rooms() -> list[str]:
+    """Кабинеты кафедры из списка, приведённые к настоящим названиям (псевдонимы сведены)."""
+    al = _aliases()
+    return [aliases_module.canonical(r, al) for r in cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH))]
+
+
 def _load_lessons_or_none(import_id: str) -> list | None:
     conn = db.get_connection(DB_PATH)
     try:
         if not db.import_exists(conn, import_id):
             return None
-        return db.load_lessons(conn, import_id)
+        return _apply_aliases(db.load_lessons(conn, import_id))
     finally:
         conn.close()
 
@@ -313,6 +332,7 @@ def cabinets_page(request: Request, import_id: str):
         "rooms": registered,
         "suggested_rooms": suggested,
         "suggested_floors": cabinets_module.group_rooms_by_floor(suggested),
+        "alias_groups": [{"room": k, "label": v.get("label", ""), "names": v.get("names", [])} for k, v in sorted(_aliases().items())],
         "irregular_by_room": cabinets_module.irregular_counts_by_room(lessons),
     })
 
@@ -323,6 +343,22 @@ def cabinets_add(import_id: str, room: str = Form(...)):
     cabinets_module.add_room(config, room)
     cabinets_module.save_config(CABINETS_PATH, config)
     return RedirectResponse(url=f"/report/{import_id}/cabinets", status_code=303)
+
+
+@app.post("/report/{import_id}/cabinets/alias/add")
+def cabinets_alias_add(import_id: str, name: str = Form(...), room: str = Form(...), label: str = Form("")):
+    al = _aliases()
+    aliases_module.add_name(al, name, room, label)
+    aliases_module.save_aliases(ALIASES_PATH, al)
+    return RedirectResponse(url=f"/report/{import_id}/cabinets#aliases", status_code=303)
+
+
+@app.post("/report/{import_id}/cabinets/alias/remove")
+def cabinets_alias_remove(import_id: str, name: str = Form(...)):
+    al = _aliases()
+    aliases_module.remove_name(al, name)
+    aliases_module.save_aliases(ALIASES_PATH, al)
+    return RedirectResponse(url=f"/report/{import_id}/cabinets#aliases", status_code=303)
 
 
 @app.post("/report/{import_id}/cabinets/add-many")
@@ -456,8 +492,8 @@ def _layout_inputs(import_id: str, rooms: list[str] | None = None, days: list[st
     lessons, notes = _load_import(import_id)
     if lessons is None:
         return None
-    registry = cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH))
-    chosen = cabinets_module.department_rooms([r for r in (rooms or []) if r.strip()])
+    registry = _registry_rooms()
+    chosen = cabinets_module.department_rooms([aliases_module.canonical(r.strip().lower(), _aliases()) for r in (rooms or []) if r.strip()])
     use_rooms = chosen or cabinets_module.layout_rooms(lessons, registry)
     use_days = sorted({d for d in (_parse_day(x) for x in (days or [])) if d is not None}) or None
     return lessons, use_rooms, (notes or {}).get("special_slots", []), use_days
@@ -472,7 +508,7 @@ def layout_settings_page(request: Request, import_id: str):
     lessons, notes = _load_import(import_id)
     if lessons is None:
         return _NOT_FOUND
-    registry_raw = cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH))
+    registry_raw = _registry_rooms()
     registry = cabinets_module.department_rooms(registry_raw)
     counts = cabinets_module.room_lesson_counts(lessons)
     candidates = cabinets_module.department_rooms(sorted(set(counts) | set(registry)))
@@ -487,6 +523,7 @@ def layout_settings_page(request: Request, import_id: str):
         "busy": {r for r, n in counts.items() if n >= cabinets_module.BUSY_ROOM_MIN_LESSONS},
         "busy_min": cabinets_module.BUSY_ROOM_MIN_LESSONS,
         "has_registry": bool(registry),
+        "room_labels": aliases_module.labels(_aliases()),
         "days": days, "day_names": DAY_NAMES_RU,
     })
 
@@ -498,7 +535,8 @@ def layout_docx(import_id: str, title: str = "", rooms: list[str] = Query(defaul
     if inputs is None:
         return _NOT_FOUND
     lessons, use_rooms, special, use_days = inputs
-    data = layout_export.build_docx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns, brief=not full_text)
+    data = layout_export.build_docx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns,
+                                    brief=not full_text, room_labels=aliases_module.labels(_aliases()))
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -513,7 +551,8 @@ def layout_xlsx(import_id: str, title: str = "", rooms: list[str] = Query(defaul
     if inputs is None:
         return _NOT_FOUND
     lessons, use_rooms, special, use_days = inputs
-    data = layout_export.build_xlsx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns, brief=not full_text)
+    data = layout_export.build_xlsx(lessons, use_rooms, special, _layout_title(title), use_days, compact=not all_columns,
+                                    brief=not full_text, room_labels=aliases_module.labels(_aliases()))
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -551,7 +590,7 @@ def free_rooms_page(request: Request, import_id: str, day: str = ""):
     if lessons is None:
         return HTMLResponse("<h1>Импорт не найден</h1><p><a href='/'>На главную</a></p>", status_code=404)
 
-    rooms = cabinets_module.department_rooms(cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH)))
+    rooms = cabinets_module.department_rooms(_registry_rooms())
     days = sorted(timegrid.build_day_grids(lessons).keys())
     chosen = _parse_day(day)
     if chosen not in days:
@@ -564,6 +603,7 @@ def free_rooms_page(request: Request, import_id: str, day: str = ""):
         "day_names": DAY_NAMES_RU,
         "view": view,
         "has_rooms": bool(rooms),
+        "room_labels": aliases_module.labels(_aliases()),
         "room_count": len(rooms),
         "room_label": _room_label,
     })
@@ -634,9 +674,9 @@ def _conflict_in_room(c, room: str) -> bool:
 
 
 def _room_label(key: str) -> str:
-    """'421' -> '421'; '1:405' (чужой корпус) -> 'корп. 1, ауд. 405'."""
+    """'421' -> '421'; '423' -> 'Малый зал (423)'; '1:405' (чужой корпус) -> 'корп. 1, ауд. 405'."""
     building, sep, num = key.partition(":")
-    return f"корп. {building}, ауд. {num}" if sep else key
+    return f"корп. {building}, ауд. {num}" if sep else aliases_module.display(key, _aliases())
 
 
 def _fmt_range(l) -> str:
@@ -755,7 +795,7 @@ def _load_import(import_id: str):
     try:
         if not db.import_exists(conn, import_id):
             return None, None
-        return db.load_lessons(conn, import_id), db.load_notes(conn, import_id)
+        return _apply_aliases(db.load_lessons(conn, import_id)), db.load_notes(conn, import_id)
     finally:
         conn.close()
 
@@ -770,7 +810,7 @@ def _comparison(import_id: str, lessons: list, f: _Filters):
         options = [(r["id"], _format_ru_datetime(r["created_at"])) for r in rows if r["id"] != import_id]
         if prev is None:
             return None, options
-        prev_lessons = db.load_lessons(conn, prev["id"])
+        prev_lessons = _apply_aliases(db.load_lessons(conn, prev["id"]))
         prev_created = prev["created_at"]
     finally:
         conn.close()

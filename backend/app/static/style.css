@@ -578,3 +578,9 @@ dialog.whatsnew[open] { display: flex; flex-direction: column; }
 
 .room-count { margin-left: 6px; color: var(--muted); font-size: 0.72rem; }
 .btn-link { color: var(--accent); font-size: 0.85rem; align-self: center; }
+
+.room-alias { margin-left: 6px; color: var(--accent); font-size: 0.72rem; font-weight: 600; }
+.alias-list li { flex-direction: column; align-items: flex-start; }
+.alias-names { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.alias-chip { display: inline-flex !important; align-items: center; gap: 6px; background: var(--accent-soft); border-radius: 999px; padding: 2px 10px; font-size: 0.85rem; }
+.alias-chip .delete-link { text-decoration: none; }

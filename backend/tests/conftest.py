@@ -80,3 +80,4 @@ def _isolated_dismissed_file(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, "DISMISSED_PATH", str(tmp_path / "dismissed_test.json"))
     # то же для реестра кабинетов: его читает даже шапка страниц (вкладка «Свободные кабинеты»)
     monkeypatch.setattr(main_module, "CABINETS_PATH", str(tmp_path / "cabinets_test.json"))
+    monkeypatch.setattr(main_module, "ALIASES_PATH", str(tmp_path / "room_aliases_test.json"))

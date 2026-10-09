@@ -46,9 +46,9 @@
     <legend>{{ floor }} <label class="floor-all"><input type="checkbox" class="floor-toggle"> весь этаж</label></legend>
     <div class="floor-rooms">
       {% for room in floor_rooms %}
-      <label class="room-pick"><input type="checkbox" name="rooms" value="{{ room }}"
+      <label class="room-pick" title="{{ room_labels.get(room, '') }}"><input type="checkbox" name="rooms" value="{{ room }}"
              data-default="{{ 1 if room in checked else 0 }}" data-registry="{{ 1 if room in registry else 0 }}" data-busy="{{ 1 if room in busy else 0 }}"
-             {% if room in checked %}checked{% endif %}> {{ room }}<small class="room-count">{{ counts.get(room, 0) }}</small></label>
+             {% if room in checked %}checked{% endif %}> {{ room }}<small class="room-count">{{ counts.get(room, 0) }}</small>{% if room_labels.get(room) %}<span class="room-alias">{{ room_labels[room] }}</span>{% endif %}</label>
       {% endfor %}
     </div>
   </fieldset>

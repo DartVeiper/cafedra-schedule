@@ -86,3 +86,8 @@ def dismissed_conflicts_path() -> str:
     Как и реестр кабинетов — в config/, а не в data/: пометки привязаны не к
     одной проверке, а к самим занятиям, и должны пережить удаление проверок."""
     return os.path.join(_base_dir(), "config", "dismissed_conflicts.json")
+
+
+def room_aliases_path() -> str:
+    """Список «один кабинет — несколько названий» (app/room_aliases.py) — тоже в config/, переживает обновления."""
+    return os.path.join(_base_dir(), "config", "room_aliases.json")

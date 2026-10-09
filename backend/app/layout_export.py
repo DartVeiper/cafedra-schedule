@@ -156,6 +156,12 @@ def cell_paragraphs(cell: dict, brief: bool = False) -> list[tuple[str, bool, bo
     return out
 
 
+def room_title(room: str, labels: dict | None) -> str:
+    """Заголовок столбца: '423' -> 'Малый зал (423)', если для кабинета задана подпись."""
+    label = (labels or {}).get(room)
+    return f"{label} ({room})" if label else room
+
+
 def _cell_text(cell: dict, brief: bool = False) -> str:
     if cell["state"] == "special":
         return ""
@@ -183,7 +189,7 @@ FLAT_HEADERS = ["День", "Начало", "Конец", "Кабинет", "Т�
 
 def build_xlsx(
     lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str,
-    days: list[int] | None = None, compact: bool = True, brief: bool = False,
+    days: list[int] | None = None, compact: bool = True, brief: bool = False, room_labels: dict | None = None,
 ) -> bytes:
     """Книга Excel: лист на каждый день (раскладка по кабинетам) + лист «Все занятия» (список с фильтрами)."""
     import openpyxl
@@ -202,7 +208,7 @@ def build_xlsx(
         ws.cell(1, 1, f"{title} — {d['name']}").font = Font(bold=True, size=13)
         ws.cell(2, 1, "Время").font = Font(bold=True)
         for j, room in enumerate(d["rooms"], start=2):
-            c = ws.cell(2, j, room)
+            c = ws.cell(2, j, room_title(room, room_labels))
             c.font, c.fill, c.alignment = Font(bold=True), head, Alignment(horizontal="center")
             ws.column_dimensions[get_column_letter(j)].width = 24
         ws.cell(2, 1).fill = head
@@ -258,7 +264,7 @@ def split_columns(rooms: list[str], limit: int = MAX_COLUMNS_PER_TABLE) -> list[
 
 def build_docx(
     lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str,
-    days: list[int] | None = None, compact: bool = True, brief: bool = False,
+    days: list[int] | None = None, compact: bool = True, brief: bool = False, room_labels: dict | None = None,
 ) -> bytes:
     """Word: альбомная страница, на каждый день — своя таблица (время × кабинеты), как в ручной раскладке.
 
@@ -355,7 +361,7 @@ def build_docx(
             write(hdr[0], [("Часы", True, False)])
             shade(hdr[0], "DDE3F5")
             for j, room in enumerate(chunk, start=1):
-                write(hdr[j], [(room, True, False)])
+                write(hdr[j], [(room_title(room, room_labels), True, False)])
                 shade(hdr[j], "DDE3F5")
             trPr = table.rows[0]._tr.get_or_add_trPr()   # шапка повторяется на каждой странице
             flag = OxmlElement("w:tblHeader")

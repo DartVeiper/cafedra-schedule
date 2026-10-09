@@ -53,7 +53,7 @@
     <tbody>
       {% for row in view.rows %}
       <tr>
-        <th class="fr-room"><a href="/report/{{ import_id }}/cabinets/{{ row.room|urlencode }}">{{ row.room }}</a></th>
+        <th class="fr-room"><a href="/report/{{ import_id }}/cabinets/{{ row.room|urlencode }}">{{ row.room }}</a>{% if room_labels.get(row.room) %}<div class="day-note">{{ room_labels[row.room] }}</div>{% endif %}</th>
         {% for cell in row.cells %}
           {% if cell.state == 'free' %}<td class="fr-cell fr-free">свободно</td>
           {% elif cell.state == 'special' %}<td class="fr-cell cell-special">—</td>

@@ -1,6 +1,34 @@
 {% extends "base.html" %}
 {% set nav = 'cabinets' %}
-{% block title %}Кабинеты · Проверка расписания{% endblock %}
+{% block title %}Кабинеты · Проверка расписания
+  <h2 id="aliases">Один кабинет — несколько названий</h2>
+  <p class="lead">Преподаватели пишут один кабинет по-разному, например малый зал: «423», «м/ф», «Малый зал». Здесь вы говорите программе,
+    что это одно и то же место — тогда накладки по нему не теряются, а в раскладке он идёт одним столбцом.</p>
+  {% if alias_groups %}
+  <ul class="cabinets-list alias-list">
+    {% for g in alias_groups %}
+    <li>
+      <div><b>{{ g.room }}</b>{% if g.label %} — {{ g.label }}{% endif %}
+        <div class="alias-names">
+          {% for n in g.names %}
+          <form method="post" action="/report/{{ import_id }}/cabinets/alias/remove" class="delete-import-form alias-chip">
+            <input type="hidden" name="name" value="{{ n }}">{{ n }}
+            <button type="submit" class="delete-link" title="Убрать это написание">✕</button>
+          </form>
+          {% endfor %}
+        </div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <form method="post" action="/report/{{ import_id }}/cabinets/alias/add" class="add-room-form">
+    <input type="text" name="name" placeholder="Как записано в файлах, например: м/ф" required>
+    <input type="text" name="room" placeholder="Это кабинет №, например: 423" required>
+    <input type="text" name="label" placeholder="Название (необязательно): Малый зал">
+    <button type="submit">Добавить</button>
+  </form>
+{% endblock %}
 {% block content %}
   <h1>Кабинеты</h1>
   <p class="lead">
