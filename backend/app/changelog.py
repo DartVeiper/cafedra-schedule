@@ -17,7 +17,7 @@ from app.version import APP_VERSION
 CHANGELOG: list[dict] = [
     {
         "version": "0.3.7",
-        "date": "",
+        "date": "2026-10-09",
         "sections": [
             ("Новое", [
                 "Обновление теперь видно: после нажатия «Скачать и установить» открывается страница с полосой загрузки "
