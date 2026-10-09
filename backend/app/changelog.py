@@ -17,7 +17,7 @@ from app.version import APP_VERSION
 CHANGELOG: list[dict] = [
     {
         "version": "0.3.6",
-        "date": "",
+        "date": "2026-10-09",
         "sections": [
             ("Новое", [
                 "Вся раскладка расписания по кабинетам в Word и Excel — в том виде, к которому привыкли на кафедре: "
