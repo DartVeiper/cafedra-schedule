@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from urllib.parse import quote, urlencode
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 from app import cabinets as cabinets_module
 from app import db, self_update
 from app import dismissed as dismissed_module
-from app import layout_export, load_checks, teacher_sheets, timegrid
+from app import layout_export, load_checks, teacher_sheets, timegrid, update_job
 from app.conflicts import conflict_key, find_conflicts
 from app.models import DAY_NAMES_RU, ConflictType
 from app.parsers.common import strip_academic_title
@@ -169,19 +169,16 @@ def apply_update(request: Request):
             "релизу на GitHub не приложен .exe-файл.</p><p><a href='/'>Назад</a></p>",
             status_code=400,
         )
-    try:
-        self_update.start_update(info["download_url"], expected_size=info.get("size"))
-    except Exception as e:
-        return HTMLResponse(
-            f"<p>Не удалось скачать обновление: {type(e).__name__}: {e}. "
-            "Проверьте подключение к интернету и попробуйте ещё раз.</p>"
-            "<p><a href='/'>Назад</a></p>",
-            status_code=500,
-        )
-    self_update.schedule_exit()
+    # Скачивание идёт в фоне: страница сразу открывается и показывает полосу загрузки (update_job.py).
+    update_job.start(info["download_url"], info["version"], info.get("size"))
     return templates.TemplateResponse(request, "update_progress.html", {
         "version": info["version"], "release_url": info["url"],
     })
+
+
+@app.get("/api/update/status")
+def api_update_status():
+    return update_job.snapshot()
 
 
 @app.post("/import")
@@ -453,21 +450,50 @@ def teacher_sheet_docx(import_id: str, name: str = ""):
     )
 
 
-def _layout_inputs(import_id: str):
+def _layout_inputs(import_id: str, rooms: list[str] | None = None, days: list[str] | None = None):
+    """Данные для раскладки. rooms/days — выбор со страницы настройки; без выбора — кабинеты кафедры
+    из списка (или все кабинеты индивидуальных занятий, если список пуст) и все дни."""
     lessons, notes = _load_import(import_id)
     if lessons is None:
         return None
     registry = cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH))
-    return lessons, cabinets_module.layout_rooms(lessons, registry), (notes or {}).get("special_slots", [])
+    chosen = cabinets_module.department_rooms([r for r in (rooms or []) if r.strip()])
+    use_rooms = chosen or cabinets_module.layout_rooms(lessons, registry)
+    use_days = sorted({d for d in (_parse_day(x) for x in (days or [])) if d is not None}) or None
+    return lessons, use_rooms, (notes or {}).get("special_slots", []), use_days
+
+
+def _layout_title(title: str) -> str:
+    return re.sub(r"\s+", " ", title).strip()[:120] or "Раскладка по кабинетам"
+
+
+@app.get("/report/{import_id}/layout", response_class=HTMLResponse)
+def layout_settings_page(request: Request, import_id: str):
+    lessons, notes = _load_import(import_id)
+    if lessons is None:
+        return _NOT_FOUND
+    registry = cabinets_module.department_rooms(cabinets_module.get_rooms(cabinets_module.load_config(CABINETS_PATH)))
+    candidates = cabinets_module.department_rooms(
+        sorted({l.room_normalized for l in lessons if l.lesson_type.value == "individual" and l.room_normalized} | set(registry))
+    )
+    checked = set(registry) if registry else set(candidates)
+    days = sorted(timegrid.build_day_grids(lessons).keys())
+    return templates.TemplateResponse(request, "layout_settings.html", {
+        "import_id": import_id,
+        "floors": cabinets_module.group_rooms_by_floor(candidates),
+        "checked": checked,
+        "has_registry": bool(registry),
+        "days": days, "day_names": DAY_NAMES_RU,
+    })
 
 
 @app.get("/report/{import_id}/layout.docx")
-def layout_docx(import_id: str):
-    inputs = _layout_inputs(import_id)
+def layout_docx(import_id: str, title: str = "", rooms: list[str] = Query(default=[]), days: list[str] = Query(default=[])):
+    inputs = _layout_inputs(import_id, rooms, days)
     if inputs is None:
         return _NOT_FOUND
-    lessons, rooms, special = inputs
-    data = layout_export.build_docx(lessons, rooms, special, "Раскладка по кабинетам")
+    lessons, use_rooms, special, use_days = inputs
+    data = layout_export.build_docx(lessons, use_rooms, special, _layout_title(title), use_days)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -476,12 +502,12 @@ def layout_docx(import_id: str):
 
 
 @app.get("/report/{import_id}/layout.xlsx")
-def layout_xlsx(import_id: str):
-    inputs = _layout_inputs(import_id)
+def layout_xlsx(import_id: str, title: str = "", rooms: list[str] = Query(default=[]), days: list[str] = Query(default=[])):
+    inputs = _layout_inputs(import_id, rooms, days)
     if inputs is None:
         return _NOT_FOUND
-    lessons, rooms, special = inputs
-    data = layout_export.build_xlsx(lessons, rooms, special, "Раскладка по кабинетам")
+    lessons, use_rooms, special, use_days = inputs
+    data = layout_export.build_xlsx(lessons, use_rooms, special, _layout_title(title), use_days)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

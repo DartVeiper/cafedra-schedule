@@ -562,3 +562,16 @@ dialog.whatsnew[open] { display: flex; flex-direction: column; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .update-progress ol { padding-left: 22px; }
 .update-progress li { margin: 6px 0; }
+
+/* ---------- Полоса загрузки обновления ---------- */
+.upd-steps { list-style: none; display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 0; margin: 16px 0 20px; }
+.upd-steps li { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.92rem; }
+.upd-steps .dot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line); display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700; }
+.upd-steps li.active { color: var(--text); font-weight: 700; }
+.upd-steps li.active .dot { border-color: var(--accent); background: var(--accent); color: #fff; }
+.upd-steps li.past .dot { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.progress { height: 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.progress-bar { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .3s ease; }
+.progress-bar.indeterminate { width: 35%; animation: slide 1.1s ease-in-out infinite alternate; }
+@keyframes slide { from { margin-left: 0; } to { margin-left: 65%; } }
+.upd-status { font-weight: 600; margin: 10px 0 6px; }

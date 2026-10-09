@@ -4,11 +4,20 @@
 {% block page_class %}narrow{% endblock %}
 {% block content %}
 <div class="update-progress">
-  <h1 id="upd-title">Устанавливаем версию {{ version }}…</h1>
-  <p id="upd-text" class="lead">Программа сейчас закроется и запустится заново сама — это занимает от 10 секунд до минуты.
-    <b>Это окно браузера не закрывайте</b>: как только всё получится, оно само вернёт вас на главную страницу.
-    Ваши проверки и настройки при обновлении не пропадают.</p>
-  <div class="spinner" id="upd-spinner" aria-hidden="true"></div>
+  <h1 id="upd-title">Обновляем программу до версии {{ version }}</h1>
+
+  <ol class="upd-steps" id="upd-steps">
+    <li data-step="download" class="active"><span class="dot">1</span> Скачиваем</li>
+    <li data-step="install"><span class="dot">2</span> Устанавливаем и перезапускаем</li>
+    <li data-step="done"><span class="dot">3</span> Готово</li>
+  </ol>
+
+  <div id="upd-working">
+    <div class="progress" aria-hidden="true"><div class="progress-bar indeterminate" id="upd-bar"></div></div>
+    <p id="upd-status" class="upd-status">Начинаем скачивание…</p>
+    <p class="wn-muted">Это окно браузера не закрывайте: когда всё получится, оно само вернёт вас на главную страницу.
+      Программа на минуту закроется и откроется заново — так и должно быть. Ваши проверки и настройки не пропадают.</p>
+  </div>
 
   <div id="upd-fail" class="failed-files-banner" hidden>
     <b id="upd-fail-title">Автоматически обновиться не получилось.</b>
@@ -25,48 +34,89 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  // Страница сама следит за перезапуском: программа закрывается (запросы перестают отвечать), затем
-  // запускается снова — уже новой версии. Если этого не случилось, честно говорим об этом и даём
-  // ручной способ, а не оставляем человека перед пустым окном.
+  // Страница сама ведёт человека по этапам: скачивание (с процентами) -> установка и перезапуск ->
+  // готово. Сервер даёт статус скачивания (/api/update/status), а после его закрытия мы ждём, пока
+  // запустится новая версия (/api/version). Если что-то не так — честно говорим и даём ручной способ.
   (function () {
     const target = {{ version|tojson }};
     const norm = (v) => String(v).replace(/^v/i, '');
-    let wasDown = false, finished = false;
-    const start = Date.now();
+    const $ = (id) => document.getElementById(id);
+    const startedAt = Date.now();
+    let wasDown = false, finished = false, installingSince = 0, lastDone = 0, lastChange = Date.now();
 
+    function step(name) {
+      document.querySelectorAll('#upd-steps li').forEach((li) => {
+        const order = ['download', 'install', 'done'];
+        const idx = order.indexOf(li.dataset.step), cur = order.indexOf(name);
+        li.classList.toggle('active', idx === cur);
+        li.classList.toggle('past', idx < cur);
+      });
+    }
+    function mb(n) { return (n / 1048576).toFixed(1).replace('.', ','); }
     function fail(reason) {
       finished = true;
-      document.getElementById('upd-spinner').hidden = true;
-      document.getElementById('upd-title').textContent = 'Обновление не завершилось';
-      document.getElementById('upd-text').hidden = true;
-      document.getElementById('upd-fail-reason').textContent = reason;
-      document.getElementById('upd-fail').hidden = false;
+      $('upd-working').hidden = true;
+      $('upd-title').textContent = 'Обновление не завершилось';
+      $('upd-fail-reason').textContent = reason;
+      $('upd-fail').hidden = false;
     }
     function ok(version) {
       finished = true;
-      document.getElementById('upd-spinner').hidden = true;
-      document.getElementById('upd-title').textContent = 'Готово! Установлена версия ' + version;
-      document.getElementById('upd-text').textContent = 'Возвращаемся на главную страницу…';
+      step('done');
+      const bar = $('upd-bar'); bar.classList.remove('indeterminate'); bar.style.width = '100%';
+      $('upd-title').textContent = 'Готово! Установлена версия ' + version;
+      $('upd-status').textContent = 'Возвращаемся на главную страницу…';
       setTimeout(() => { location.href = '/'; }, 1500);
     }
+    function showDownload(s) {
+      step('download');
+      const bar = $('upd-bar');
+      if (s.total > 0) {
+        const pct = Math.min(100, Math.round(s.done * 100 / s.total));
+        bar.classList.remove('indeterminate'); bar.style.width = pct + '%';
+        $('upd-status').textContent = 'Скачиваем: ' + mb(s.done) + ' из ' + mb(s.total) + ' МБ (' + pct + '%)';
+      } else {
+        $('upd-status').textContent = 'Скачиваем… ' + mb(s.done) + ' МБ';
+      }
+      if (s.done !== lastDone) { lastDone = s.done; lastChange = Date.now(); }
+      else if (Date.now() - lastChange > 90000) fail('Скачивание остановилось: данные не поступают больше полутора минут.');
+    }
+    function showInstalling() {
+      step('install');
+      const bar = $('upd-bar'); bar.classList.remove('indeterminate'); bar.style.width = '100%';
+      $('upd-status').textContent = 'Файл скачан и проверен. Устанавливаем и перезапускаем программу — это займёт до минуты…';
+      if (!installingSince) installingSince = Date.now();
+      else if (!wasDown && Date.now() - installingSince > 45000) fail('Программа не закрылась для установки новой версии.');
+    }
+
     async function tick() {
       if (finished) return;
+      let s = null;
       try {
-        const r = await fetch('/api/version', { cache: 'no-store' });
-        const j = await r.json();
-        if (wasDown) {
-          if (norm(j.version) === norm(target)) ok(j.version);
-          else fail('После перезапуска запустилась прежняя версия (' + j.version + ').');
-          return;
-        }
-        if (Date.now() - start > 30000) { fail('Программа не закрылась для установки новой версии.'); return; }
+        s = await (await fetch('/api/update/status', { cache: 'no-store' })).json();
       } catch (e) {
-        wasDown = true;                      // программа закрылась — ждём, пока запустится новая
+        if (!wasDown) { wasDown = true; step('install'); $('upd-status').textContent = 'Программа перезапускается…'; }
       }
-      if (Date.now() - start > 180000) { fail('Новая версия не запустилась за 3 минуты.'); return; }
-      setTimeout(tick, 1500);
+      if (s) {
+        if (s.state === 'error') { fail(s.message); return; }
+        if (wasDown || s.state === 'idle') {
+          // сервер снова отвечает (новый процесс) — смотрим, какая версия запустилась
+          wasDown = true;
+          try {
+            const v = await (await fetch('/api/version', { cache: 'no-store' })).json();
+            finished = true;
+            if (norm(v.version) === norm(target)) ok(v.version);
+            else fail('После перезапуска запустилась прежняя версия (' + v.version + ').');
+            return;
+          } catch (e) { /* ещё не готов */ }
+        } else if (s.state === 'downloading') showDownload(s);
+        else if (s.state === 'installing') showInstalling();
+      }
+      if (Date.now() - startedAt > 900000) { fail('Обновление идёт слишком долго.'); return; }
+      if (wasDown && Date.now() - installingSince > 240000 && installingSince) { fail('Новая версия не запустилась за 4 минуты.'); return; }
+      setTimeout(tick, 700);
     }
-    setTimeout(tick, 1500);
+    tick();
   })();
 </script>
 {% endblock %}

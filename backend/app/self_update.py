@@ -50,6 +50,7 @@ import urllib.request
 from app.paths import is_frozen
 
 MAX_SWAP_TRIES = 30
+DOWNLOAD_CHUNK = 256 * 1024
 
 # raw-строка: в путях обратные слэши (\System32\tasklist.exe), иначе \t и \f станут управляющими символами
 _HELPER_SCRIPT = r"""@echo off
@@ -112,28 +113,47 @@ def build_helper_script(
     )
 
 
-def download_new_exe(download_url: str, dest_path: str, expected_size: int | None = None) -> None:
-    """Скачивает файл целиком и проверяет, что он не обрезан и похож на .exe:
-    иначе подмена испортила бы рабочую программу. Пишем во временный .part и
-    только потом переименовываем — недокачанный файл никогда не лежит под
-    именем .new."""
+def download_new_exe(download_url: str, dest_path: str, expected_size: int | None = None, progress=None) -> None:
+    """Скачивает файл кусками (progress(скачано, всего) — для полосы загрузки) и проверяет, что он
+    не обрезан и похож на .exe: иначе подмена испортила бы рабочую программу. Пишем во временный
+    .part и только потом переименовываем — недокачанный файл никогда не лежит под именем .new."""
     req = urllib.request.Request(download_url, headers={"User-Agent": "cafedra-schedule-app"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = resp.read()
-        headers = getattr(resp, "headers", None)
-        declared = headers.get("Content-Length") if headers is not None else None
-
-    if declared is not None and str(declared).isdigit() and int(declared) != len(data):
-        raise ValueError(f"файл скачался не полностью ({len(data)} из {declared} байт)")
-    if expected_size is not None and expected_size != len(data):
-        raise ValueError(f"размер файла не совпадает с ожидаемым ({len(data)} вместо {expected_size} байт)")
-    if not data.startswith(b"MZ"):
-        raise ValueError("скачанный файл не похож на программу для Windows")
-
     part_path = dest_path + ".part"
-    with open(part_path, "wb") as f:
-        f.write(data)
-    os.replace(part_path, dest_path)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            headers = getattr(resp, "headers", None)
+            declared = headers.get("Content-Length") if headers is not None else None
+            declared_n = int(declared) if declared is not None and str(declared).isdigit() else None
+            total = declared_n if declared_n is not None else expected_size
+            done = 0
+            first = True
+            with open(part_path, "wb") as f:
+                while True:
+                    chunk = resp.read(DOWNLOAD_CHUNK)
+                    if not chunk:
+                        break
+                    if first:
+                        if not chunk.startswith(b"MZ"):
+                            raise ValueError("скачанный файл не похож на программу для Windows")
+                        first = False
+                    f.write(chunk)
+                    done += len(chunk)
+                    if progress:
+                        progress(done, total)
+        if first:
+            raise ValueError("скачанный файл пустой или не похож на программу для Windows")
+        if declared_n is not None and declared_n != done:
+            raise ValueError(f"файл скачался не полностью ({done} из {declared_n} байт)")
+        if expected_size is not None and expected_size != done:
+            raise ValueError(f"размер файла не совпадает с ожидаемым ({done} вместо {expected_size} байт)")
+        os.replace(part_path, dest_path)
+    except BaseException:
+        if os.path.exists(part_path):
+            try:
+                os.remove(part_path)
+            except OSError:
+                pass
+        raise
 
 
 def start_update(
@@ -142,6 +162,7 @@ def start_update(
     exe_path: str | None = None,
     pid: int | None = None,
     max_tries: int = MAX_SWAP_TRIES,
+    progress=None,
 ) -> None:
     """Скачивает новую версию и готовит подмену + перезапуск. Текущий процесс
     должен вскоре после этого завершиться (см. schedule_exit) — иначе
@@ -154,7 +175,7 @@ def start_update(
     new_path = exe_path + ".new"
     helper_path = os.path.join(exe_dir, "_cafedra_update.bat")
 
-    download_new_exe(download_url, new_path, expected_size)
+    download_new_exe(download_url, new_path, expected_size, progress)
 
     with open(helper_path, "w", encoding="utf-8") as f:
         f.write(build_helper_script(pid, new_path, exe_path, max_tries=max_tries))

@@ -67,7 +67,9 @@ def entry_lines(e: dict) -> list[str]:
     return [x for x in lines if x]
 
 
-def build_layout(lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None = None) -> list[dict]:
+def build_layout(
+    lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None = None, days: list[int] | None = None
+) -> list[dict]:
     """[{day, name, slots:[{start, special}], rooms:[...], rows:[{start, special, cells:[{state, entries}]}]}]
     по каждому дню, где есть сетка. state: "free" | "busy" | "clash" | "special"."""
     grids = timegrid.build_day_grids(lessons)
@@ -76,8 +78,10 @@ def build_layout(lessons: list[Lesson], rooms: list[str], special_slots: list[di
         if l.room_normalized in rooms:
             by_room_day.setdefault((l.room_normalized, l.day_of_week), []).append(l)
 
-    days = []
+    result = []
     for day in sorted(grids):
+        if days is not None and day not in days:
+            continue
         starts = list(grids[day].slots)
         specials = {}
         for sp in special_slots or []:
@@ -98,8 +102,8 @@ def build_layout(lessons: list[Lesson], rooms: list[str], special_slots: list[di
                 state = "free" if not entries else ("clash" if len(entries) > 1 else "busy")
                 cells.append({"state": state, "entries": entries})
             rows.append({"start": timegrid.fmt_minutes(start), "special": specials.get(start), "cells": cells})
-        days.append({"day": day, "name": DAY_NAMES_RU[day], "rooms": rooms, "rows": rows})
-    return days
+        result.append({"day": day, "name": DAY_NAMES_RU[day], "rooms": rooms, "rows": rows})
+    return result
 
 
 def cell_paragraphs(cell: dict) -> list[tuple[str, bool, bool]]:
@@ -140,7 +144,10 @@ FLAT_HEADERS = ["День", "Начало", "Конец", "Кабинет", "Т�
                 "Студент", "Группа", "Предмет", "Источник (файл)"]
 
 
-def build_xlsx(lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str) -> bytes:
+def build_xlsx(
+    lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str,
+    days: list[int] | None = None,
+) -> bytes:
     """Книга Excel: лист на каждый день (раскладка по кабинетам) + лист «Все занятия» (список с фильтрами)."""
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -153,7 +160,7 @@ def build_xlsx(lessons: list[Lesson], rooms: list[str], special_slots: list[dict
     head = PatternFill("solid", fgColor="FFDDE3F5")
     wrap = Alignment(wrap_text=True, vertical="top")
 
-    for d in build_layout(lessons, rooms, special_slots):
+    for d in build_layout(lessons, rooms, special_slots, days):
         ws = wb.create_sheet(d["name"])
         ws.cell(1, 1, f"{title} — {d['name']}").font = Font(bold=True, size=13)
         ws.cell(2, 1, "Время").font = Font(bold=True)
@@ -165,7 +172,6 @@ def build_xlsx(lessons: list[Lesson], rooms: list[str], special_slots: list[dict
         ws.column_dimensions["A"].width = 16
         for i, row in enumerate(d["rows"], start=3):
             ws.cell(i, 1, row["start"] + (f"\n{row['special']}" if row["special"] else "")).alignment = wrap
-            max_lines = 1
             for j, cell in enumerate(row["cells"], start=2):
                 text = _cell_text(cell)
                 c = ws.cell(i, j, text)
@@ -174,11 +180,15 @@ def build_xlsx(lessons: list[Lesson], rooms: list[str], special_slots: list[dict
                     c.fill = red
                 elif cell["state"] == "special":
                     c.fill = grey
-                max_lines = max(max_lines, text.count("\n") + 1)
-            ws.row_dimensions[i].height = max(18, 13 * max_lines)
+            # Высоту строк с текстом НЕ задаём: Excel сам подгоняет её под перенос длинных слов по ширине
+            # столбца (ручной расчёт по числу строк обрезал нижние строки в ячейках). Пустым слотам даём
+            # нормальную минимальную высоту, чтобы они выглядели «коробочками», а не линиями.
+            if all(not _cell_text(c) for c in row["cells"]):
+                ws.row_dimensions[i].height = 30
         ws.freeze_panes = "B3"
         ws.page_setup.orientation = "landscape"
         ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0   # по ширине — на страницу, по высоте — сколько понадобится
         ws.sheet_properties.pageSetUpPr = openpyxl.worksheet.properties.PageSetupProperties(fitToPage=True)
 
     flat = wb.create_sheet("Все занятия")
@@ -197,10 +207,19 @@ def build_xlsx(lessons: list[Lesson], rooms: list[str], special_slots: list[dict
     return buf.getvalue()
 
 
-def build_docx(lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str) -> bytes:
-    """Word: альбомная страница, на каждый день — своя таблица (время × кабинеты), как в ручной раскладке."""
+def build_docx(
+    lessons: list[Lesson], rooms: list[str], special_slots: list[dict] | None, title: str,
+    days: list[int] | None = None,
+) -> bytes:
+    """Word: альбомная страница, на каждый день — своя таблица (время × кабинеты), как в ручной раскладке.
+
+    Оформление рассчитано на любое число кабинетов (от 1 до 15+): ширина столбца кабинета
+    ограничена сверху (иначе при 1–3 кабинетах таблица растягивалась на всю страницу), у каждой
+    строки времени есть минимальная высота (иначе пустые слоты схлопывались в тонкие линии),
+    шрифт крупнее, когда кабинетов мало."""
     from docx import Document
     from docx.enum.section import WD_ORIENT
+    from docx.enum.table import WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Cm, Pt, RGBColor
@@ -213,57 +232,87 @@ def build_docx(lessons: list[Lesson], rooms: list[str], special_slots: list[dict
         setattr(sec, side, Cm(1.0))
     normal = doc.styles["Normal"]
     normal.font.name = "Times New Roman"
-    normal.font.size = Pt(7)
+    normal.font.size = Pt(8)
+
+    time_col_cm = 2.2
+    usable_cm = 29.7 - 2.0 - time_col_cm
+    n_rooms = max(1, len(rooms))
+    col_cm = min(4.6, usable_cm / n_rooms)            # не растягиваем 1–3 кабинета на всю страницу
+    font_pt = 8.5 if col_cm >= 3.6 else (7.5 if col_cm >= 2.4 else 7)
+    row_cm = 1.35                                      # минимальная высота строки времени (пустые слоты — «коробочки»)
 
     def shade(cell, hex_fill: str) -> None:
+        # В схеме Word свойства ячейки идут строго по порядку (… shd, noWrap, tcMar, …, vAlign), иначе
+        # строгий Word может счесть файл повреждённым — вставляем заливку ПЕРЕД выравниванием и т.п.
         tcPr = cell._tc.get_or_add_tcPr()
         shd = OxmlElement("w:shd")
         shd.set(qn("w:val"), "clear")
         shd.set(qn("w:color"), "auto")
         shd.set(qn("w:fill"), hex_fill)
+        later = [qn(f"w:{t}") for t in ("noWrap", "tcMar", "textDirection", "tcFitText", "vAlign", "hideMark")]
+        for child in tcPr:
+            if child.tag in later:
+                child.addprevious(shd)
+                return
         tcPr.append(shd)
 
-    def write(cell, lines: list[str], bold_first: bool = True) -> None:
+    def set_cell_margins(table) -> None:
+        tblPr = table._tbl.tblPr
+        mar = OxmlElement("w:tblCellMar")
+        for side, twips in (("top", 40), ("left", 80), ("bottom", 40), ("right", 80)):
+            el = OxmlElement(f"w:{side}")
+            el.set(qn("w:w"), str(twips))
+            el.set(qn("w:type"), "dxa")
+            mar.append(el)
+        tblPr.append(mar)
+
+    def write(cell, paragraphs: list[tuple[str, bool, bool]]) -> None:
         cell.text = ""
-        first = True
-        for i, line in enumerate(lines):
-            p = cell.paragraphs[0] if first else cell.add_paragraph()
-            first = False
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+        for i, (text, bold, alarm) in enumerate(paragraphs):
+            p = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.space_before = Pt(0)
-            run = p.add_run(line)
-            run.font.size = Pt(7)
-            run.bold = bold_first and i == 0
+            run = p.add_run(text)
+            run.font.size = Pt(font_pt)
+            run.bold = bold
+            if alarm:
+                run.font.color.rgb = RGBColor(0xB0, 0x20, 0x2A)
 
-    layout = build_layout(lessons, rooms, special_slots)
+    layout = build_layout(lessons, rooms, special_slots, days)
     if not layout:
         doc.add_paragraph("Нет данных для раскладки — не найдено индивидуальных занятий.")
-    usable_cm = 29.7 - 2.0 - 2.0
     for n, d in enumerate(layout):
         if n:
             doc.add_page_break()
         h = doc.add_paragraph()
         r = h.add_run(f"{title} — {d['name']}")
         r.bold = True
-        r.font.size = Pt(12)
+        r.font.size = Pt(13)
         table = doc.add_table(rows=1, cols=1 + len(d["rooms"]))
         table.style = "Table Grid"
         table.autofit = False
-        col_w = Cm(usable_cm / max(1, len(d["rooms"])))
+        set_cell_margins(table)
         hdr = table.rows[0].cells
-        write(hdr[0], ["Часы"])
+        write(hdr[0], [("Часы", True, False)])
         shade(hdr[0], "DDE3F5")
         for j, room in enumerate(d["rooms"], start=1):
-            write(hdr[j], [room])
+            write(hdr[j], [(room, True, False)])
             shade(hdr[j], "DDE3F5")
         trPr = table.rows[0]._tr.get_or_add_trPr()   # шапка повторяется на каждой странице
         flag = OxmlElement("w:tblHeader")
         flag.set(qn("w:val"), "true")
         trPr.append(flag)
         for row in d["rows"]:
-            cells = table.add_row().cells
-            write(cells[0], [row["start"]] + ([row["special"]] if row["special"] else []))
+            tr = table.add_row()
+            tr.height, tr.height_rule = Cm(row_cm), WD_ROW_HEIGHT_RULE.AT_LEAST
+            cant = OxmlElement("w:cantSplit")        # строка целиком на одной странице
+            cant.set(qn("w:val"), "true")
+            tr._tr.get_or_add_trPr().append(cant)
+            cells = tr.cells
+            write(cells[0], [(row["start"], True, False)] + ([(row["special"], False, False)] if row["special"] else []))
             for j, cell in enumerate(row["cells"], start=1):
+                cells[j].vertical_alignment = WD_ALIGN_VERTICAL.TOP
                 if cell["state"] == "special":
                     shade(cells[j], "E9ECEF")
                     continue
@@ -271,20 +320,11 @@ def build_docx(lessons: list[Lesson], rooms: list[str], special_slots: list[dict
                     continue
                 if cell["state"] == "clash":
                     shade(cells[j], "F8D7DA")
-                paragraphs = cell_paragraphs(cell)
-                cells[j].text = ""
-                for i, (text, bold, alarm) in enumerate(paragraphs):
-                    p = cells[j].paragraphs[0] if i == 0 else cells[j].add_paragraph()
-                    p.paragraph_format.space_after = Pt(0)
-                    run = p.add_run(text)
-                    run.font.size = Pt(7)
-                    run.bold = bold
-                    if alarm:
-                        run.font.color.rgb = RGBColor(0xB0, 0x20, 0x2A)
+                write(cells[j], cell_paragraphs(cell))
         for row in table.rows:
-            row.cells[0].width = Cm(2.0)
+            row.cells[0].width = Cm(time_col_cm)
             for c in row.cells[1:]:
-                c.width = col_w
+                c.width = Cm(col_cm)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()

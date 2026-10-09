@@ -100,15 +100,15 @@ def test_api_version_and_update_progress_page(monkeypatch):
             "download_url": "https://x/CafedraSchedule.exe", "size": 10, "notes": ""}
     monkeypatch.setattr(main_module, "check_for_update", lambda force=False: info)
     monkeypatch.setattr(main_module.self_update, "can_self_update", lambda: True)
-    monkeypatch.setattr(main_module.self_update, "start_update", lambda url, expected_size=None: None)
-    monkeypatch.setattr(main_module.self_update, "schedule_exit", lambda: None)
+    monkeypatch.setattr(main_module.self_update, "start_update", lambda url, expected_size=None, progress=None, **k: None)
+    monkeypatch.setattr(main_module.self_update, "schedule_exit", lambda delay_seconds=1.5: None)
     client = TestClient(main_module.app)
 
     assert client.get("/api/version").json() == {"version": APP_VERSION}
 
     page = client.post("/update/apply").text
-    assert "Устанавливаем версию v9.9.9" in page
-    assert "/api/version" in page and '"v9.9.9"' in page                      # страница следит за перезапуском
+    assert "Обновляем программу до версии v9.9.9" in page
+    assert "/api/version" in page and "/api/update/status" in page and '"v9.9.9"' in page   # страница следит за загрузкой и перезапуском
     assert "https://github.com/x/y/releases/tag/v9.9.9" in page and "CafedraSchedule.exe" in page   # ручной способ
 
 

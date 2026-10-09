@@ -30,7 +30,8 @@ def test_helper_script_contains_pid_and_paths():
 
 class _FakeResponse:
     def __init__(self, data: bytes, content_length: str | None = None):
-        self._data = data
+        import io
+        self._buf = io.BytesIO(data)
         self.headers = {"Content-Length": content_length} if content_length is not None else {}
 
     def __enter__(self):
@@ -39,8 +40,8 @@ class _FakeResponse:
     def __exit__(self, *a):
         return False
 
-    def read(self):
-        return self._data
+    def read(self, n: int = -1) -> bytes:
+        return self._buf.read(n)
 
 
 def _serve(monkeypatch, data: bytes, content_length: str | None = None):
@@ -122,3 +123,25 @@ def test_independent_launch_env_drops_pyinstaller_service_vars(monkeypatch):
     assert not [k for k in env if k.startswith("_PYI_")]
     assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert env["CAFEDRA_KEEP_ME"] == "yes"  # остальное окружение (PATH, SystemRoot...) сохраняется
+
+
+def test_download_reports_progress_in_chunks(tmp_path, monkeypatch):
+    monkeypatch.setattr(self_update, "DOWNLOAD_CHUNK", 4)
+    _serve(monkeypatch, b"MZ" + b"x" * 10, content_length="12")
+    seen = []
+
+    self_update.download_new_exe("https://example/x.exe", str(tmp_path / "x.exe.new"), progress=lambda d, t: seen.append((d, t)))
+
+    assert seen == [(4, 12), (8, 12), (12, 12)]
+    assert (tmp_path / "x.exe.new").read_bytes() == b"MZ" + b"x" * 10
+
+
+def test_empty_download_is_rejected(tmp_path, monkeypatch):
+    _serve(monkeypatch, b"", content_length="0")
+    try:
+        self_update.download_new_exe("https://example/x.exe", str(tmp_path / "x.exe.new"))
+    except ValueError as e:
+        assert "пустой" in str(e)
+    else:
+        raise AssertionError("ожидали ValueError")
+    assert not (tmp_path / "x.exe.new").exists()

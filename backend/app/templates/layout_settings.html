@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% set nav = 'report' %}
+{% block title %}Раскладка по кабинетам · Проверка расписания{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Раскладка по кабинетам</h1>
+    <p class="lead">Всё расписание одним документом: на каждый день своя таблица, время строками, кабинеты столбцами —
+      как ваша ручная раскладка. Выберите, какие кабинеты и дни включить, и при желании впишите заголовок.</p>
+  </div>
+</div>
+
+<form method="get" class="layout-form" id="layout-form">
+  <label class="filter-field" style="display:flex;flex-direction:column;align-items:flex-start;gap:4px;max-width:640px">
+    <span class="filter-label">Заголовок</span>
+    <input type="text" name="title" class="num-input" style="width:100%" maxlength="120"
+           placeholder="Например: КАФЕДРА ФОРТЕПИАНО 2026-2027 учебный год 1 семестр" value="">
+  </label>
+
+  <h2>Дни</h2>
+  <div class="floor-rooms">
+    {% for d in days %}<label class="room-pick"><input type="checkbox" name="days" value="{{ d }}" checked> {{ day_names[d] }}</label>{% endfor %}
+  </div>
+
+  <h2>Кабинеты</h2>
+  <p class="lead">{% if has_registry %}Отмечены кабинеты вашей кафедры из вкладки «Кабинеты» — добавьте или уберите нужные.
+    {% else %}Список кабинетов кафедры ещё не заполнен, поэтому отмечены все — оставьте только свои (или заполните список во вкладке «Кабинеты»).{% endif %}</p>
+  {% for floor, floor_rooms in floors %}
+  <fieldset class="floor-group">
+    <legend>{{ floor }} <label class="floor-all"><input type="checkbox" class="floor-toggle"> весь этаж</label></legend>
+    <div class="floor-rooms">
+      {% for room in floor_rooms %}
+      <label class="room-pick"><input type="checkbox" name="rooms" value="{{ room }}" {% if room in checked %}checked{% endif %}> {{ room }}</label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  {% endfor %}
+
+  <div class="page-actions" style="margin-top:18px">
+    <button type="submit" formaction="/report/{{ import_id }}/layout.docx">⬇ Скачать в Word</button>
+    <button type="submit" formaction="/report/{{ import_id }}/layout.xlsx" class="btn-secondary" style="background:var(--surface);color:var(--text);border-color:var(--line)">⬇ Скачать в Excel</button>
+  </div>
+  <p class="wn-muted">В Excel дополнительно будет лист «Все занятия» — список всех занятий с фильтрами (он не зависит от выбранных кабинетов и дней).</p>
+</form>
+<script>
+  document.querySelectorAll('.floor-toggle').forEach(function (t) {
+    var group = t.closest('fieldset');
+    var boxes = group.querySelectorAll('input[name=rooms]');
+    t.checked = Array.prototype.every.call(boxes, function (c) { return c.checked; });
+    t.addEventListener('change', function () { boxes.forEach(function (c) { c.checked = t.checked; }); });
+  });
+</script>
+{% endblock %}

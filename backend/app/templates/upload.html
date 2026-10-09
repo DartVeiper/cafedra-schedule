@@ -13,7 +13,8 @@
   {% endif %}
   <div class="update-actions">
     {% if update_info.download_url and can_self_update %}
-    <form action="/update/apply" method="post" class="update-form" id="update-form">
+    <form action="/update/apply" method="post" class="update-form" id="update-form"
+          onsubmit="var b=document.getElementById('update-btn'); b.disabled=true; b.textContent='Запускаем…';">
       <button type="submit" class="update-btn" id="update-btn">Скачать и установить</button>
       <span class="update-note">Программа скачает файл и перезапустится сама — старую копию менять не нужно. Несохранённого ничего нет: проверки хранятся на диске.</span>
     </form>
